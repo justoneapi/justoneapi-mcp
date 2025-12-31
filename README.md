@@ -1,3 +1,5 @@
+> **Raw JSON by design.**
+
 # JustOneAPI MCP Server
 
 Use JustOneAPI inside AI assistants via Model Context Protocol (MCP).

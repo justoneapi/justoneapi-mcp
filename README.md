@@ -1,3 +1,5 @@
+[![npm version](https://badge.fury.io/js/justoneapi-mcp.svg)](https://www.npmjs.com/package/justoneapi-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 > **Raw JSON by design.** Unmodified upstream responses for maximum data fidelity.
 
 # JustOneAPI MCP Server

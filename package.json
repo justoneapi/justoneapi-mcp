@@ -26,7 +26,7 @@
     "claude",
     "cursor"
   ],
-  "author": "",
+  "author": "Just One API <support@justoneapi.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -47,7 +47,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1",
     "dotenv": "^17.2.3",
-    "zod": "^4.3.2"
+    "zod": "^4.3.4"
   },
   "devDependencies": {
     "@types/node": "^25.0.3",

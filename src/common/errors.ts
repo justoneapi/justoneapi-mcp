@@ -45,14 +45,8 @@ export function mapUpstreamCode(code: number | undefined): JOAErrorCode {
   }
 }
 
-export function buildUserMessage(
-  mcpCode: JOAErrorCode,
-  upstreamMessage?: string | null
-): string {
-  const base =
-    upstreamMessage && upstreamMessage.trim()
-      ? upstreamMessage.trim()
-      : undefined;
+export function buildUserMessage(mcpCode: JOAErrorCode, upstreamMessage?: string | null): string {
+  const base = upstreamMessage && upstreamMessage.trim() ? upstreamMessage.trim() : undefined;
 
   switch (mcpCode) {
     case "INVALID_TOKEN":

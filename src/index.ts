@@ -8,16 +8,18 @@ import {
   kuaishouSearchVideoV2,
   KuaishouSearchVideoV2Input,
 } from "./tools/kuaishou/search_video_v2.js";
+import { version } from "./version.js";
 
 const server = new McpServer({
   name: "justoneapi-mcp",
-  version: "0.1.0",
+  version,
 });
 
 server.registerTool(
   "kuaishou_search_video_v2",
   {
-    description: "Search Kuaishou videos by keyword. Returns the original raw JSON response from upstream without field normalization.",
+    description:
+      "Search Kuaishou videos by keyword. Returns the original raw JSON response from upstream without field normalization.",
     inputSchema: KuaishouSearchVideoV2Input.shape,
   },
   async (input) => {
@@ -42,11 +44,28 @@ server.registerTool(
 );
 
 async function main() {
+  // Validate configuration on startup
+  if (!process.env.JUSTONEAPI_TOKEN?.trim()) {
+    console.error(
+      "[justoneapi-mcp] ERROR: JUSTONEAPI_TOKEN is required but not set.\n" +
+        "Please set the JUSTONEAPI_TOKEN environment variable in your MCP host configuration."
+    );
+    process.exit(1);
+  }
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Optional: log startup info to stderr (won't interfere with MCP protocol on stdout)
+  if (process.env.JUSTONEAPI_DEBUG?.toLowerCase() === "true") {
+    console.error(`[justoneapi-mcp] Server started (version ${version})`);
+    console.error(
+      `[justoneapi-mcp] Base URL: ${process.env.JUSTONEAPI_BASE_URL ?? "https://api.justoneapi.com"}`
+    );
+  }
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error("[justoneapi-mcp] Fatal error:", err);
   process.exit(1);
 });

@@ -10,17 +10,13 @@ export const config = {
   // Network behavior
   timeoutMs: Number(process.env.JUSTONEAPI_TIMEOUT_MS ?? "20000"),
   retry: Number(process.env.JUSTONEAPI_RETRY ?? "1"), // number of retries after the first attempt
-
-  // Output control
-  maxItems: Number(process.env.JUSTONEAPI_MAX_ITEMS ?? "10"),
-  includeRaw: (process.env.JUSTONEAPI_INCLUDE_RAW ?? "").toLowerCase() === "true",
 };
 
 export function requireToken(): string {
   if (!config.token || !config.token.trim()) {
-    const err: any = new Error(
+    const err = new Error(
       "Missing JUSTONEAPI_TOKEN. Please set it in the MCP server environment."
-    );
+    ) as Error & { upstreamCode: number };
     err.upstreamCode = 100; // align with your upstream: Invalid token
     throw err;
   }

@@ -1,5 +1,12 @@
 import { config, requireToken, toSafeUrlForLog } from "./config.js";
-import { isUpstreamOk } from "./errors.js";
+import { isUpstreamOk, UpstreamResponse } from "./errors.js";
+
+type ApiError = Error & {
+  httpStatus?: number;
+  upstreamCode?: number;
+  payload?: unknown;
+  code?: string;
+};
 
 /**
  * GET JSON helper for JustOneAPI style responses:
@@ -13,14 +20,14 @@ import { isUpstreamOk } from "./errors.js";
  * - small retry
  * - safe logging (never leaks token)
  */
-export async function getJson(pathWithQuery: string) {
+export async function getJson(pathWithQuery: string): Promise<UpstreamResponse> {
   // ensure token exists early (so we can return INVALID_TOKEN)
   requireToken();
 
   const url = `${config.baseUrl}${pathWithQuery}`;
 
   const attempts = 1 + Math.max(0, Number.isFinite(config.retry) ? config.retry : 0);
-  let lastErr: any;
+  let lastErr: ApiError | unknown;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const controller = new AbortController();
@@ -34,11 +41,11 @@ export async function getJson(pathWithQuery: string) {
       const res = await fetch(url, { method: "GET", signal: controller.signal });
       const text = await res.text();
 
-      let json: any;
+      let json: UpstreamResponse;
       try {
-        json = JSON.parse(text);
+        json = JSON.parse(text) as UpstreamResponse;
       } catch {
-        const err: any = new Error("Failed to parse JSON response from upstream.");
+        const err = new Error("Failed to parse JSON response from upstream.") as ApiError;
         err.httpStatus = res.status;
         err.payload = text;
         throw err;
@@ -46,37 +53,38 @@ export async function getJson(pathWithQuery: string) {
 
       // HTTP-level error
       if (!res.ok) {
-        const err: any = new Error(json?.message ?? `HTTP ${res.status}`);
+        const err = new Error(json.message ?? `HTTP ${res.status}`) as ApiError;
         err.httpStatus = res.status;
         err.payload = json;
         // If upstream also provides code, keep it
-        if (json?.code !== undefined) err.upstreamCode = Number(json.code);
+        if (json.code !== undefined) err.upstreamCode = Number(json.code);
         throw err;
       }
 
       // Business-level error (code != 0)
       if (!isUpstreamOk(json)) {
-        const err: any = new Error(json?.message ?? `Upstream code ${json?.code}`);
-        err.upstreamCode = Number(json?.code);
+        const err = new Error(json.message ?? `Upstream code ${json.code}`) as ApiError;
+        err.upstreamCode = Number(json.code);
         err.payload = json;
         throw err;
       }
 
       return json;
-    } catch (e: any) {
+    } catch (e: unknown) {
       lastErr = e;
+      const error = e as ApiError;
 
       // Retry only for:
       // - timeout (AbortError)
       // - HTTP 5xx
       // - network-type failures
-      const httpStatus = e?.httpStatus;
+      const httpStatus = error.httpStatus;
       const retryable =
-        e?.name === "AbortError" ||
+        error.name === "AbortError" ||
         (typeof httpStatus === "number" && httpStatus >= 500) ||
-        e?.code === "ECONNRESET" ||
-        e?.code === "ECONNREFUSED" ||
-        e?.code === "ENOTFOUND";
+        error.code === "ECONNRESET" ||
+        error.code === "ECONNREFUSED" ||
+        error.code === "ENOTFOUND";
 
       if (!retryable || attempt === attempts) break;
 

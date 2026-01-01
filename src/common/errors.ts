@@ -15,7 +15,7 @@ export type UpstreamResponse = {
   code?: number;
   message?: string | null;
   recordTime?: string;
-  data?: any;
+  data?: unknown;
 };
 
 export function isUpstreamOk(resp: UpstreamResponse): boolean {
@@ -74,45 +74,53 @@ export function buildUserMessage(mcpCode: JOAErrorCode, upstreamMessage?: string
   }
 }
 
-export function toMcpErrorPayload(e: any): {
+export function toMcpErrorPayload(e: unknown): {
   code: JOAErrorCode;
   message: string;
   upstreamCode?: number;
   httpStatus?: number;
 } {
+  const error = e as {
+    name?: string;
+    message?: string;
+    upstreamCode?: number;
+    httpStatus?: number;
+    code?: string;
+    cause?: unknown;
+  };
   // Timeout from AbortController
-  if (e?.name === "AbortError") {
+  if (error.name === "AbortError") {
     return { code: "NETWORK_TIMEOUT", message: buildUserMessage("NETWORK_TIMEOUT") };
   }
 
   // Our own thrown upstreamCode (business code)
-  if (e?.upstreamCode !== undefined) {
-    const upstreamCode = Number(e.upstreamCode);
+  if (error.upstreamCode !== undefined) {
+    const upstreamCode = Number(error.upstreamCode);
     const mcpCode = mapUpstreamCode(upstreamCode);
     return {
       code: mcpCode,
-      message: buildUserMessage(mcpCode, e?.message),
+      message: buildUserMessage(mcpCode, error.message),
       upstreamCode,
-      httpStatus: typeof e?.httpStatus === "number" ? e.httpStatus : undefined,
+      httpStatus: typeof error.httpStatus === "number" ? error.httpStatus : undefined,
     };
   }
 
   // HTTP level errors if any
-  if (typeof e?.httpStatus === "number") {
+  if (typeof error.httpStatus === "number") {
     return {
       code: "UPSTREAM_ERROR",
-      message: e?.message ?? `HTTP error ${e.httpStatus}`,
-      httpStatus: e.httpStatus,
+      message: error.message ?? `HTTP error ${error.httpStatus}`,
+      httpStatus: error.httpStatus,
     };
   }
 
   // Generic network errors
-  if (e?.cause || e?.code === "ECONNREFUSED" || e?.code === "ENOTFOUND") {
+  if (error.cause || error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
     return {
       code: "NETWORK_ERROR",
-      message: e?.message ?? buildUserMessage("NETWORK_ERROR"),
+      message: error.message ?? buildUserMessage("NETWORK_ERROR"),
     };
   }
 
-  return { code: "UPSTREAM_ERROR", message: e?.message ?? "Unknown error" };
+  return { code: "UPSTREAM_ERROR", message: error.message ?? "Unknown error" };
 }

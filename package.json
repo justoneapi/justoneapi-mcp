@@ -1,6 +1,6 @@
 {
   "name": "justoneapi-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "MCP server for JustOneAPI - expose API endpoints to AI assistants via Model Context Protocol",
   "main": "dist/index.js",

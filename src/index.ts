@@ -7,10 +7,7 @@ import {
   kuaishouSearchVideoV2,
   KuaishouSearchVideoV2Input,
 } from "./tools/kuaishou/search_video_v2.js";
-import {
-  unifiedSearchV1,
-  UnifiedSearchV1Input,
-} from "./tools/search/unified_search_v1.js";
+import { unifiedSearchV1, UnifiedSearchV1Input } from "./tools/search/unified_search_v1.js";
 import { version } from "./version.js";
 
 const server = new McpServer({

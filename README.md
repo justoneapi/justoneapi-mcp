@@ -39,7 +39,29 @@ This MCP server provides multiple tools to interact with JustOneAPI endpoints. E
 
 Supports: Weibo, WeChat, Zhihu, Douyin, Xiaohongshu, Bilibili, Kuaishou, and News.
 
-**Quick Example:**
+**How to use (Natural Language):**
+
+Just ask Claude or your MCP host to use the tool with a natural language request:
+- *"Search for AI discussions on Chinese social media from last week"*
+- *"Find posts about deepseek on Weibo from January 1st to 5th"*
+- *"Search for chatgpt OR 机器学习 on all platforms, exclude 广告"*
+
+Claude will automatically:
+- Convert your request to the correct API format
+- Handle date formatting (UTC+8 timezone)
+- Process pagination with nextCursor
+- Return and summarize results
+
+**Search Syntax:**
+- Single keyword: `deepseek`
+- AND search: `deepseek chatgpt` (both must appear)
+- OR search: `deepseek~chatgpt` (either can appear)
+- NOT search: `deepseek -chatgpt` (exclude chatgpt)
+
+**Platform Options:**
+`ALL` (default), `NEWS`, `WEIBO`, `WEIXIN`, `ZHIHU`, `DOUYIN`, `XIAOHONGSHU`, `BILIBILI`, `KUAISHOU`
+
+**Technical Parameters (for reference):**
 ```json
 {
   "keyword": "AI",
@@ -48,15 +70,6 @@ Supports: Weibo, WeChat, Zhihu, Douyin, Xiaohongshu, Bilibili, Kuaishou, and New
   "end": "2025-01-02 23:59:59"
 }
 ```
-
-**Search Syntax:**
-- Single keyword: `deepseek`
-- AND search: `deepseek chatgpt`
-- OR search: `deepseek~chatgpt`
-- NOT search: `deepseek -chatgpt`
-
-**Platform Options:**
-`ALL` (default), `NEWS`, `WEIBO`, `WEIXIN`, `ZHIHU`, `DOUYIN`, `XIAOHONGSHU`, `BILIBILI`, `KUAISHOU`
 
 ### Discovering All Available Tools
 
@@ -242,16 +255,53 @@ Or if globally installed:
 
 After configuring, restart Claude Desktop (Cmd + Q) or your MCP host.
 
-### 2) Test
+### 2) Test the Connection
 
-In Claude Desktop:
+In Claude Desktop, ask:
 
-    Please list available tools.
+```
+Please list all available tools from justoneapi-mcp
+```
 
-Then:
+You should see the available tools including `unified_search_v1` and `kuaishou_search_video_v2`.
 
-    Use the tool kuaishou_search_video_v2 to search videos with keyword "dance".
-    Return the raw JSON.
+### 3) Use the Unified Search
+
+Try searching across multiple platforms:
+
+```
+Use the unified_search_v1 tool to search for "AI" across all platforms
+from January 1st to January 2nd, 2025.
+```
+
+Claude will automatically format the request and return results from Weibo, WeChat, Zhihu, Douyin, Xiaohongshu, Bilibili, Kuaishou, and News.
+
+**Example conversation:**
+
+**You:** Search for recent discussions about "deepseek" on Chinese social media platforms from the last week.
+
+**Claude:** I'll search for "deepseek" across multiple platforms using the unified search tool.
+
+*[Claude uses unified_search_v1 with appropriate date range and returns aggregated results]*
+
+### 4) Advanced Search Examples
+
+**Platform-specific search:**
+```
+Search for "chatgpt" on Weibo only, from December 1st to January 2nd
+```
+
+**Complex search queries:**
+```
+Search for posts containing "AI" OR "机器学习" but NOT "广告" on Zhihu,
+from the last 30 days
+```
+
+**Pagination:**
+```
+Get the next page of results from the previous search
+```
+*Claude will automatically use the nextCursor from the previous response*
 
 ---
 

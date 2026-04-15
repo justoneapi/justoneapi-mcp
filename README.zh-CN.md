@@ -126,7 +126,7 @@ Claude 会自动：
 
 你需要一个 JustOneAPI token 才能使用此服务器。
 
-**获取你的 token**：访问 [https://justoneapi.com](https://dashboard.justoneapi.com/zh?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册并获取 API token。
+**获取你的 token**：访问 [https://justoneapi.com](https://dashboard.justoneapi.com/zh/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册并获取 API token。
 
 获得 token 后，在 MCP 客户端的环境变量中配置：
 
@@ -165,7 +165,7 @@ JUSTONEAPI_TOKEN=你的实际token
 }
 ```
 
-> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
+> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
 
 ### 方式 2：全局安装
 
@@ -193,7 +193,7 @@ npm install -g justoneapi-mcp
 }
 ```
 
-> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
+> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
 
 ### 方式 3：本地开发
 
@@ -225,7 +225,7 @@ npm run build
 }
 ```
 
-> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
+> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
 
 就这么简单！只需要配置 token。
 
@@ -258,7 +258,7 @@ npm run build
 }
 ```
 
-> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
+> 💡 **获取你的 token**：在 [justoneapi.com](https://dashboard.justoneapi.com/zh/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) 注册
 
 ---
 

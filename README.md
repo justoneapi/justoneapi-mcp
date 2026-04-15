@@ -124,7 +124,7 @@ Example (simplified):
 
 You need a JustOneAPI token to use this server.
 
-**Get your token**: Visit [https://justoneapi.com](https://justoneapi.com/?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) to sign up and obtain your API token.
+**Get your token**: Visit [https://justoneapi.com](https://dashboard.justoneapi.com/?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) to sign up and obtain your API token.
 
 ---
 

@@ -124,7 +124,7 @@ Example (simplified):
 
 You need a JustOneAPI token to use this server.
 
-**Get your token**: Visit [https://justoneapi.com](https://dashboard.justoneapi.com/?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) to sign up and obtain your API token.
+**Get your token**: Visit [https://justoneapi.com](https://dashboard.justoneapi.com/en/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme) to sign up and obtain your API token.
 
 ---
 
@@ -155,7 +155,7 @@ Edit the configuration file for your operating system:
 }
 ```
 
-> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
+> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/en/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
 
 ### Option 2: Global Installation
 
@@ -183,7 +183,7 @@ Edit the configuration file for your operating system:
 }
 ```
 
-> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
+> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/en/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
 
 ### Option 3: Local Development
 
@@ -215,7 +215,7 @@ Edit the configuration file for your operating system:
 }
 ```
 
-> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
+> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/en/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
 
 That's it! Only the token is required.
 
@@ -248,7 +248,7 @@ Or if globally installed:
 }
 ```
 
-> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
+> 💡 **Get your token**: Sign up at [justoneapi.com](https://dashboard.justoneapi.com/en/login?utm_source=github.com&utm_medium=referral&utm_campaign=justoneapi_justoneapi_mcp&utm_content=repo_readme)
 
 ---
 

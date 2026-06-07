@@ -15,6 +15,15 @@ const server = new McpServer({
   version,
 });
 
+const HELP = `Usage: justoneapi-mcp [options]
+
+MCP server for JustOneAPI.
+
+Options:
+  -h, --help       Show this help message.
+  -V, --version    Print the installed version.
+`;
+
 server.registerTool(
   "kuaishou_search_video_v2",
   {
@@ -72,6 +81,16 @@ server.registerTool(
 );
 
 async function main() {
+  const [firstArg] = process.argv.slice(2);
+  if (firstArg === "--help" || firstArg === "-h") {
+    process.stdout.write(HELP);
+    return;
+  }
+  if (firstArg === "--version" || firstArg === "-V") {
+    process.stdout.write(`${version}\n`);
+    return;
+  }
+
   // Validate configuration on startup
   if (!process.env.JUSTONEAPI_TOKEN?.trim()) {
     console.error(

@@ -186,6 +186,44 @@ If pagination can be inferred, output contains:
 }
 ```
 
+## get_account_balance
+
+Check the current JustOneAPI token's available balance.
+
+Input: none.
+
+Output includes:
+
+```json
+{
+  "success": true,
+  "code": 0,
+  "message": null,
+  "data": {
+    "balance": "100.0000",
+    "currency": "CNY"
+  }
+}
+```
+
+## get_usage_summary
+
+Review the current JustOneAPI token's recent API usage and spending trends.
+
+Input:
+
+```json
+{
+  "max_items": 100
+}
+```
+
+Fields:
+
+| Field       | Required | Description                                                   |
+| ----------- | -------- | ------------------------------------------------------------- |
+| `max_items` | No       | Maximum array items retained per array, default 100, max 100. |
+
 ## list_platforms
 
 List supported platforms and endpoint counts.

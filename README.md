@@ -101,6 +101,14 @@ Continue to the next page of results.
 ```
 
 ```text
+Check my JustOneAPI balance.
+```
+
+```text
+Show my recent API usage and spending.
+```
+
+```text
 The API returned code 400. Help me check which parameter might be wrong.
 ```
 

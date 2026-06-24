@@ -2,6 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { RuntimeContext } from "../common/runtime.js";
 import { runTool } from "../common/toolResult.js";
+import {
+  GetAccountBalanceInput,
+  GetUsageSummaryInput,
+  getAccountBalance,
+  getUsageSummary,
+} from "../tools/account.js";
 import { callEndpoint, CallEndpointInput } from "../tools/callEndpoint.js";
 import { getEndpointSchema, GetEndpointSchemaInput } from "../tools/getEndpointSchema.js";
 import { listPlatforms } from "../tools/listPlatforms.js";
@@ -54,6 +60,26 @@ export function createJustOneMcpServer(ctx: RuntimeContext): McpServer {
       inputSchema: CallEndpointInput.shape,
     },
     async (input) => runTool(() => callEndpoint(CallEndpointInput.parse(input), ctx))
+  );
+
+  server.registerTool(
+    "get_account_balance",
+    {
+      description:
+        "Get the current JustOneAPI token's available balance and currency. Use this when the user asks about account balance, remaining balance, or whether the token can continue calling APIs.",
+      inputSchema: GetAccountBalanceInput.shape,
+    },
+    async (input) => runTool(() => getAccountBalance(GetAccountBalanceInput.parse(input), ctx))
+  );
+
+  server.registerTool(
+    "get_usage_summary",
+    {
+      description:
+        "Get the current JustOneAPI token's API usage and spending summary, including recent call trends and spending trends.",
+      inputSchema: GetUsageSummaryInput.shape,
+    },
+    async (input) => runTool(() => getUsageSummary(GetUsageSummaryInput.parse(input), ctx))
   );
 
   server.registerTool(

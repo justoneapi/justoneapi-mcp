@@ -99,6 +99,14 @@ JUSTONEAPI_TOKEN=your_token
 ```
 
 ```text
+帮我查一下 JustOneAPI 余额。
+```
+
+```text
+帮我看一下最近的接口调用量和消费情况。
+```
+
+```text
 接口返回 code 400，帮我看看可能是哪个参数错了。
 ```
 

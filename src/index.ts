@@ -1,99 +1,59 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-
-import { toMcpErrorPayload } from "./common/errors.js";
-import {
-  kuaishouSearchVideoV2,
-  KuaishouSearchVideoV2Input,
-} from "./tools/kuaishou/search_video_v2.js";
-import { unifiedSearchV1, UnifiedSearchV1Input } from "./tools/search/unified_search_v1.js";
-import { version } from "./version.js";
-
-const server = new McpServer({
-  name: "justoneapi-mcp",
-  version,
-});
-
-server.registerTool(
-  "kuaishou_search_video_v2",
-  {
-    description:
-      "Search Kuaishou videos by keyword. Returns the original raw JSON response from upstream without field normalization.",
-    inputSchema: KuaishouSearchVideoV2Input.shape,
-  },
-  async (input) => {
-    try {
-      const data = await kuaishouSearchVideoV2(input);
-      return {
-        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-      };
-    } catch (e: unknown) {
-      const m = toMcpErrorPayload(e);
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `ERROR[${m.code}] (upstream=${m.upstreamCode ?? "N/A"}): ${m.message}`,
-          },
-        ],
-      };
-    }
-  }
-);
-
-server.registerTool(
-  "unified_search_v1",
-  {
-    description:
-      "Unified search across multiple platforms (Weibo, WeChat, Zhihu, Douyin, Xiaohongshu, Bilibili, Kuaishou, News). Search by keyword with time range. Supports AND/OR/NOT operators and pagination. Returns raw JSON response.",
-    inputSchema: UnifiedSearchV1Input.shape,
-  },
-  async (input) => {
-    try {
-      const data = await unifiedSearchV1(input);
-      return {
-        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-      };
-    } catch (e: unknown) {
-      const m = toMcpErrorPayload(e);
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `ERROR[${m.code}] (upstream=${m.upstreamCode ?? "N/A"}): ${m.message}`,
-          },
-        ],
-      };
-    }
-  }
-);
+import { CatalogManager } from "./catalog/manager.js";
+import { FileCatalogStore } from "./node/fileCatalogStore.js";
+import { createJustOneMcpServer } from "./server/createServer.js";
+import { loadNodeConfig } from "./config.js";
+import { bundledCatalog } from "./generated/bundledCatalog.js";
+import { stderrLogger } from "./common/logger.js";
+import { RuntimeContext } from "./common/runtime.js";
 
 async function main() {
-  // Validate configuration on startup
-  if (!process.env.JUSTONEAPI_TOKEN?.trim()) {
+  const config = loadNodeConfig();
+  const catalogManager = new CatalogManager(
+    new FileCatalogStore(config.catalogCacheDir),
+    bundledCatalog,
+    config
+  );
+
+  const runtime: RuntimeContext = {
+    transport: "stdio",
+    config,
+    catalogManager,
+    logger: stderrLogger,
+    getToken: () => process.env.JUSTONEAPI_TOKEN?.trim() || null,
+    isAdmin: () => true,
+  };
+
+  if (!runtime.getToken()) {
     console.error(
       "[justoneapi-mcp] ERROR: JUSTONEAPI_TOKEN is required but not set.\n" +
-        "Please set the JUSTONEAPI_TOKEN environment variable in your MCP host configuration."
+        "Please set JUSTONEAPI_TOKEN in your MCP host configuration."
     );
     process.exit(1);
   }
 
+  const server = createJustOneMcpServer(runtime);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  // Optional: log startup info to stderr (won't interfere with MCP protocol on stdout)
-  if (process.env.JUSTONEAPI_DEBUG?.toLowerCase() === "true") {
-    console.error(`[justoneapi-mcp] Server started (version ${version})`);
-    console.error(
-      `[justoneapi-mcp] Base URL: ${process.env.JUSTONEAPI_BASE_URL ?? "https://api.justoneapi.com"}`
-    );
+  if (config.debug) {
+    stderrLogger.info("server_started", {
+      transport: "stdio",
+      catalog_endpoints: (await catalogManager.load()).meta.endpoint_count,
+    });
+  }
+
+  if (config.catalogRefreshIntervalMs > 0) {
+    setInterval(() => {
+      void catalogManager.refresh("cron").then((result) => {
+        if (!result.success) stderrLogger.warn("catalog_refresh_failed", result);
+      });
+    }, config.catalogRefreshIntervalMs).unref?.();
   }
 }
 
-main().catch((err) => {
-  console.error("[justoneapi-mcp] Fatal error:", err);
+main().catch((error) => {
+  console.error("[justoneapi-mcp] Fatal error:", error);
   process.exit(1);
 });

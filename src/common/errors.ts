@@ -1,4 +1,5 @@
-export type JOAErrorCode =
+export type McpErrorCode =
+  | "AUTH_REQUIRED"
   | "INVALID_TOKEN"
   | "COLLECT_FAILED"
   | "RATE_LIMITED"
@@ -7,22 +8,34 @@ export type JOAErrorCode =
   | "INTERNAL_ERROR"
   | "PERMISSION_DENIED"
   | "INSUFFICIENT_BALANCE"
+  | "TOKEN_LIMIT_EXCEEDED"
+  | "ENDPOINT_NOT_FOUND"
+  | "CATALOG_NOT_READY"
+  | "CATALOG_REFRESH_FAILED"
+  | "OPENAPI_FETCH_FAILED"
+  | "OPENAPI_PARSE_FAILED"
   | "NETWORK_TIMEOUT"
   | "NETWORK_ERROR"
   | "UPSTREAM_ERROR";
 
-export type UpstreamResponse = {
-  code?: number;
-  message?: string | null;
-  recordTime?: string;
-  data?: unknown;
+export type McpErrorPayload = {
+  code: McpErrorCode;
+  message: string;
+  upstream_code?: number;
+  http_status?: number;
+  details?: Record<string, unknown>;
 };
 
-export function isUpstreamOk(resp: UpstreamResponse): boolean {
-  return Number(resp?.code) === 0;
+export class McpToolError extends Error {
+  readonly payload: McpErrorPayload;
+
+  constructor(payload: McpErrorPayload) {
+    super(payload.message);
+    this.payload = payload;
+  }
 }
 
-export function mapUpstreamCode(code: number | undefined): JOAErrorCode {
+export function mapUpstreamCode(code: number | undefined): McpErrorCode {
   switch (code) {
     case 100:
       return "INVALID_TOKEN";
@@ -40,87 +53,66 @@ export function mapUpstreamCode(code: number | undefined): JOAErrorCode {
       return "PERMISSION_DENIED";
     case 601:
       return "INSUFFICIENT_BALANCE";
+    case 602:
+      return "TOKEN_LIMIT_EXCEEDED";
     default:
       return "UPSTREAM_ERROR";
   }
 }
 
-export function buildUserMessage(mcpCode: JOAErrorCode, upstreamMessage?: string | null): string {
-  const base = upstreamMessage && upstreamMessage.trim() ? upstreamMessage.trim() : undefined;
-
-  switch (mcpCode) {
+export function defaultMessage(code: McpErrorCode): string {
+  switch (code) {
+    case "AUTH_REQUIRED":
+      return "缺少 JustOneAPI token，请配置 JUSTONEAPI_TOKEN 或 Authorization header。";
     case "INVALID_TOKEN":
-      return base ?? "Invalid or inactive token. Please update JUSTONEAPI_TOKEN.";
+      return "Token 无效或已失效。";
     case "COLLECT_FAILED":
-      return base ?? "Collection failed. Please retry after a short delay.";
+      return "采集失败，请稍后重试。";
     case "RATE_LIMITED":
-      return base ?? "Rate limit exceeded. Please slow down and retry later.";
+      return "超出速率限制，请稍后重试。";
     case "DAILY_QUOTA_EXCEEDED":
-      return base ?? "Daily quota exceeded. Please try again tomorrow or upgrade your plan.";
+      return "超出每日配额。";
     case "VALIDATION_ERROR":
-      return base ?? "Invalid parameters. Please check the input values.";
+      return "请求参数错误。";
     case "PERMISSION_DENIED":
-      return base ?? "Permission denied. Please verify your account permissions.";
+      return "权限不足。";
     case "INSUFFICIENT_BALANCE":
-      return base ?? "Insufficient balance. Please top up your account.";
-    case "INTERNAL_ERROR":
-      return base ?? "Internal server error. Please retry later.";
+      return "账户共享余额不足。";
+    case "TOKEN_LIMIT_EXCEEDED":
+      return "当前 API TOKEN 的累计消费上限已达到。多个 TOKEN 仍共享同一个账户余额；如需继续使用，请调整该 TOKEN 的消费上限或更换 TOKEN。";
+    case "ENDPOINT_NOT_FOUND":
+      return "未找到指定 endpoint_id。";
+    case "CATALOG_NOT_READY":
+      return "接口目录尚未准备好。";
+    case "CATALOG_REFRESH_FAILED":
+      return "接口目录刷新失败。";
+    case "OPENAPI_FETCH_FAILED":
+      return "拉取 OpenAPI 失败。";
+    case "OPENAPI_PARSE_FAILED":
+      return "解析 OpenAPI 失败。";
     case "NETWORK_TIMEOUT":
-      return base ?? "Network timeout. Please retry later.";
+      return "网络请求超时。";
     case "NETWORK_ERROR":
-      return base ?? "Network error. Please retry later.";
+      return "网络请求失败。";
+    case "INTERNAL_ERROR":
+      return "内部服务器错误。";
+    case "UPSTREAM_ERROR":
     default:
-      return base ?? "Upstream error. Please retry later.";
+      return "上游服务错误。";
   }
 }
 
-export function toMcpErrorPayload(e: unknown): {
-  code: JOAErrorCode;
-  message: string;
-  upstreamCode?: number;
-  httpStatus?: number;
-} {
-  const error = e as {
-    name?: string;
-    message?: string;
-    upstreamCode?: number;
-    httpStatus?: number;
-    code?: string;
-    cause?: unknown;
+export function errorResult(error: McpErrorPayload): { success: false; error: McpErrorPayload } {
+  const { message, ...rest } = error;
+  return {
+    success: false,
+    error: {
+      ...rest,
+      message: message || defaultMessage(error.code),
+    },
   };
-  // Timeout from AbortController
-  if (error.name === "AbortError") {
-    return { code: "NETWORK_TIMEOUT", message: buildUserMessage("NETWORK_TIMEOUT") };
-  }
+}
 
-  // Our own thrown upstreamCode (business code)
-  if (error.upstreamCode !== undefined) {
-    const upstreamCode = Number(error.upstreamCode);
-    const mcpCode = mapUpstreamCode(upstreamCode);
-    return {
-      code: mcpCode,
-      message: buildUserMessage(mcpCode, error.message),
-      upstreamCode,
-      httpStatus: typeof error.httpStatus === "number" ? error.httpStatus : undefined,
-    };
-  }
-
-  // HTTP level errors if any
-  if (typeof error.httpStatus === "number") {
-    return {
-      code: "UPSTREAM_ERROR",
-      message: error.message ?? `HTTP error ${error.httpStatus}`,
-      httpStatus: error.httpStatus,
-    };
-  }
-
-  // Generic network errors
-  if (error.cause || error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
-    return {
-      code: "NETWORK_ERROR",
-      message: error.message ?? buildUserMessage("NETWORK_ERROR"),
-    };
-  }
-
-  return { code: "UPSTREAM_ERROR", message: error.message ?? "Unknown error" };
+export function validationError(message: string, details?: Record<string, unknown>): McpToolError {
+  return new McpToolError({ code: "VALIDATION_ERROR", message, details });
 }

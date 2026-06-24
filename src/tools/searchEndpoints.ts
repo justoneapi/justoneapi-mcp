@@ -1,0 +1,26 @@
+import { z } from "zod";
+import { RuntimeContext } from "../common/runtime.js";
+import { McpToolError } from "../common/errors.js";
+import { searchEndpoints as rankEndpoints } from "../search/rank.js";
+
+export const SearchEndpointsInput = z.object({
+  query: z.string().min(1).describe("Natural-language endpoint search query."),
+  platform: z
+    .string()
+    .optional()
+    .describe("Optional platform filter, e.g. douyin, xiaohongshu, 抖音."),
+  limit: z.number().int().min(1).max(20).default(8).optional(),
+  include_deprecated: z.boolean().default(false).optional(),
+  include_hidden: z.boolean().default(false).optional(),
+});
+
+export async function searchEndpoints(
+  input: z.infer<typeof SearchEndpointsInput>,
+  ctx: RuntimeContext
+) {
+  if (!ctx.getToken()) {
+    throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
+  }
+  const bundle = await ctx.catalogManager.load();
+  return rankEndpoints(bundle.catalog.endpoints, input);
+}

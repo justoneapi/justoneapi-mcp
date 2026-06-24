@@ -1,21 +1,27 @@
 {
   "name": "justoneapi-mcp",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "type": "module",
-  "description": "MCP server for JustOneAPI - expose API endpoints to AI assistants via Model Context Protocol",
-  "main": "dist/index.js",
+  "description": "MCP server for JustOneAPI - discover and call JustOneAPI endpoints via Model Context Protocol",
+  "main": "dist/src/index.js",
   "bin": {
-    "justoneapi-mcp": "dist/index.js"
+    "justoneapi-mcp": "dist/src/index.js"
   },
   "scripts": {
-    "dev": "node --loader ts-node/esm src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "lint": "eslint src/**/*.ts",
-    "lint:fix": "eslint src/**/*.ts --fix",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
-    "prepublishOnly": "npm run build"
+    "dev": "tsx src/index.ts",
+    "dev:stdio": "tsx src/index.ts",
+    "dev:worker": "npx wrangler dev",
+    "deploy:worker": "npx wrangler deploy",
+    "build:catalog": "tsx scripts/build-catalog.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "lint": "eslint \"{src,scripts,tests}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,scripts,tests}/**/*.ts\" --fix",
+    "format": "prettier --write \"{src,scripts,tests}/**/*.ts\" \"*.md\"",
+    "format:check": "prettier --check \"{src,scripts,tests}/**/*.ts\" \"*.md\"",
+    "prepublishOnly": "npm run build:catalog && npm run build && npm test"
   },
   "keywords": [
     "mcp",
@@ -42,14 +48,18 @@
   "files": [
     "dist",
     "README.md",
+    "README.zh-CN.md",
+    "TOOLS.md",
     "LICENSE"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.16.2",
     "dotenv": "^17.2.3",
     "zod": "^4.3.4"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260623.1",
     "@types/node": "^25.0.3",
     "@typescript-eslint/eslint-plugin": "^8.51.0",
     "@typescript-eslint/parser": "^8.51.0",
@@ -57,6 +67,9 @@
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.7.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
+    "wrangler": "^4.104.0"
   }
 }

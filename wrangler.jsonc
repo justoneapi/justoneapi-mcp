@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "justoneapi-mcp",
+  "account_id": "61c3174305ce40b8423600a383ec27ca",
+  "main": "src/worker.ts",
+  "workers_dev": true,
+  "preview_urls": true,
+  "compatibility_date": "2026-06-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "JUSTONEAPI_BASE_URL": "https://api.justoneapi.com",
+    "JUSTONEAPI_OPENAPI_URL": "https://docs.justoneapi.com/openapi.json",
+    "JUSTONEAPI_OPENAPI_ZH_URL": "https://docs.justoneapi.com/openapi-zh.json",
+    "JUSTONEAPI_CATALOG_REFRESH_INTERVAL_MS": "3600000",
+    "JUSTONEAPI_CATALOG_MEMORY_TTL_MS": "60000"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "JUSTONEAPI_MCP_CATALOG",
+      "id": "aef3b62053174379acc159ff181536f7",
+      "preview_id": "33a3770ce2a0496989f8896c28e8657e"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 * * * *"]
+  }
+}

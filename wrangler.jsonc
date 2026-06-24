@@ -5,6 +5,12 @@
   "main": "src/worker.ts",
   "workers_dev": true,
   "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "mcp.justoneapi.com",
+      "custom_domain": true
+    }
+  ],
   "compatibility_date": "2026-06-23",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {

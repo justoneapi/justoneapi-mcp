@@ -8,10 +8,15 @@ export const RefreshCatalogInput = z.object({
     .default(false)
     .optional()
     .describe("Reserved for compatibility; refresh still skips writes when unchanged."),
+  rollback: z
+    .boolean()
+    .default(false)
+    .optional()
+    .describe("Roll back active catalog to the previous validated release."),
 });
 
 export async function refreshCatalog(
-  _input: z.infer<typeof RefreshCatalogInput>,
+  input: z.infer<typeof RefreshCatalogInput>,
   ctx: RuntimeContext
 ) {
   if (!(await ctx.isAdmin())) {
@@ -21,5 +26,7 @@ export async function refreshCatalog(
     });
   }
 
-  return await ctx.catalogManager.refresh("manual");
+  return input.rollback
+    ? await ctx.catalogManager.rollback()
+    : await ctx.catalogManager.refresh("manual");
 }

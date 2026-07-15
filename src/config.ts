@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { configuredPrivateCatalogTerms } from "./catalog/security.js";
 
 export const DEFAULT_BASE_URL = "https://api.justoneapi.com";
 export const DEFAULT_OPENAPI_URL = "https://docs.justoneapi.com/openapi.json";
@@ -13,6 +14,8 @@ export type AppConfig = {
   catalogCacheDir?: string;
   adminToken?: string;
   debug: boolean;
+  searchV2Enabled: boolean;
+  privateCatalogTerms: string[];
   timeoutMs: number;
   retry: number;
 };
@@ -37,6 +40,11 @@ export function loadNodeConfig(): AppConfig {
     catalogCacheDir: process.env.JUSTONEAPI_CATALOG_CACHE_DIR,
     adminToken: process.env.JUSTONEAPI_ADMIN_TOKEN,
     debug: (process.env.JUSTONEAPI_DEBUG ?? "").toLowerCase() === "true",
+    searchV2Enabled: (process.env.JUSTONEAPI_SEARCH_V2_ENABLED ?? "").toLowerCase() === "true",
+    privateCatalogTerms: configuredPrivateCatalogTerms(
+      process.env.JUSTONEAPI_PRIVATE_CATALOG_TERMS,
+      process.env.JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS
+    ),
     timeoutMs: numberFromEnv("JUSTONEAPI_TIMEOUT_MS", 60000),
     retry: numberFromEnv("JUSTONEAPI_RETRY", 1),
   };
@@ -50,6 +58,9 @@ export function loadWorkerConfig(env: {
   JUSTONEAPI_CATALOG_MEMORY_TTL_MS?: string;
   JUSTONEAPI_ADMIN_TOKEN?: string;
   JUSTONEAPI_DEBUG?: string;
+  JUSTONEAPI_SEARCH_V2_ENABLED?: string;
+  JUSTONEAPI_PRIVATE_CATALOG_TERMS?: string;
+  JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS?: string;
   JUSTONEAPI_TIMEOUT_MS?: string;
   JUSTONEAPI_RETRY?: string;
 }): AppConfig {
@@ -68,6 +79,11 @@ export function loadWorkerConfig(env: {
     catalogMemoryTtlMs: getNumber("JUSTONEAPI_CATALOG_MEMORY_TTL_MS", 60 * 1000),
     adminToken: env.JUSTONEAPI_ADMIN_TOKEN,
     debug: (env.JUSTONEAPI_DEBUG ?? "").toLowerCase() === "true",
+    searchV2Enabled: (env.JUSTONEAPI_SEARCH_V2_ENABLED ?? "").toLowerCase() === "true",
+    privateCatalogTerms: configuredPrivateCatalogTerms(
+      env.JUSTONEAPI_PRIVATE_CATALOG_TERMS,
+      env.JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS
+    ),
     timeoutMs: getNumber("JUSTONEAPI_TIMEOUT_MS", 60000),
     retry: getNumber("JUSTONEAPI_RETRY", 1),
   };

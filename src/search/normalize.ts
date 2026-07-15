@@ -8,18 +8,48 @@ export type NormalizedQuery = {
   platform?: string;
   terms: string[];
   aliases: string[];
+  phrase: string;
+  explicit_version?: string;
 };
 
-export function normalizeQuery(query: string, explicitPlatform?: string | null): NormalizedQuery {
+export function normalizeQuery(
+  query: string,
+  explicitPlatform?: string | null,
+  extraPlatformAliases: string[] = [],
+  allowAutomaticPlatformDetection = true,
+  resolvedCanonicalPlatform?: string
+): NormalizedQuery {
   const aliases: string[] = [];
-  const platform = detectPlatform(`${explicitPlatform ?? ""} ${query}`, aliases);
-  const terms = normalizeTerms(query, aliases);
+  const platformMatch = detectPlatform(
+    explicitPlatform
+      ? `${explicitPlatform} ${query}`
+      : allowAutomaticPlatformDetection
+        ? query
+        : "",
+    aliases
+  );
+  const platform = resolvedCanonicalPlatform ?? platformMatch?.platform;
+  if (resolvedCanonicalPlatform && !platformMatch) {
+    aliases.push(
+      `${explicitPlatform ?? resolvedCanonicalPlatform} -> ${resolvedCanonicalPlatform}`
+    );
+  }
+  const explicitVersion = query.match(/(?:^|[^a-z0-9])(v\d+)(?:$|[^a-z0-9])/i)?.[1].toLowerCase();
+  const withoutPlatform = stripPlatform(query, platform, extraPlatformAliases);
+  const phrase = withoutPlatform
+    .replace(/(?:^|[^a-z0-9])v\d+(?=$|[^a-z0-9])/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  const terms = normalizeTerms(phrase, aliases);
 
   return {
     original: query,
     platform,
     terms,
     aliases,
+    phrase,
+    explicit_version: explicitVersion,
   };
 }
 
@@ -65,10 +95,21 @@ function normalizeTerms(query: string, aliases: string[]): string[] {
   const cjkChunks = lower.match(/[\u4e00-\u9fff]{1,12}/g) ?? [];
   values.push(...cjkChunks);
 
-  return unique(values.filter((term) => term && !STOPWORDS.has(term)));
+  return unique(
+    values.filter((term) => term && !STOPWORDS.has(term) && isSpecificSearchTerm(term))
+  );
 }
 
-function detectPlatform(text: string, aliases: string[]): string | undefined {
+function isSpecificSearchTerm(term: string): boolean {
+  const cjkLength = (term.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  if (cjkLength > 0) return cjkLength >= 2;
+  return term.replace(/[^a-z0-9]+/gi, "").length >= 3;
+}
+
+function detectPlatform(
+  text: string,
+  aliases: string[]
+): { platform: string; alias: string } | undefined {
   const lower = text.toLowerCase();
   const normalized = toSnakeCase(lower);
   let best: { platform: string; score: number; alias: string } | null = null;
@@ -78,10 +119,21 @@ function detectPlatform(text: string, aliases: string[]): string | undefined {
       const aliasLower = alias.toLowerCase();
       const aliasSnake = toSnakeCase(aliasLower);
       let score = 0;
-      if (lower.includes(aliasLower)) score = aliasLower.length + 20;
-      else if (aliasSnake && normalized.includes(aliasSnake)) score = aliasSnake.length + 15;
-      else if (aliasLower.length >= 2 && editDistance(lower, aliasLower) <= 1) score = 10;
-      else if (aliasSnake.length >= 3 && editDistance(normalized, aliasSnake) <= 1) score = 8;
+      if (containsAlias(lower, aliasLower)) score = aliasLower.length + 20;
+      else if (aliasSnake.length >= 3 && normalized.includes(aliasSnake)) {
+        score = aliasSnake.length + 15;
+      } else if (
+        aliasLower.length >= 2 &&
+        Math.abs(lower.trim().length - aliasLower.length) <= 1 &&
+        editDistance(lower.trim(), aliasLower) <= 1
+      )
+        score = 10;
+      else if (
+        aliasSnake.length >= 3 &&
+        Math.abs(normalized.length - aliasSnake.length) <= 1 &&
+        editDistance(normalized, aliasSnake) <= 1
+      )
+        score = 8;
 
       if (score > (best?.score ?? 0)) {
         best = { platform, score, alias };
@@ -91,9 +143,45 @@ function detectPlatform(text: string, aliases: string[]): string | undefined {
 
   if (best) {
     aliases.push(`${best.alias} -> ${best.platform}`);
-    return best.platform;
+    return { platform: best.platform, alias: best.alias };
   }
   return undefined;
+}
+
+function stripPlatform(
+  query: string,
+  platform: string | undefined,
+  extraPlatformAliases: string[]
+): string {
+  if (!platform) return query;
+  const entry = PLATFORM_DICTIONARY[platform];
+  let result = query;
+  for (const alias of unique([
+    platform,
+    entry?.name ?? "",
+    ...(entry?.aliases ?? []),
+    ...extraPlatformAliases,
+  ]).sort((a, b) => b.length - a.length)) {
+    if (!alias) continue;
+    if (/^[a-z0-9]+$/i.test(alias) && alias.length <= 2) {
+      result = result.replace(
+        new RegExp(`(^|[^a-z0-9])${escapeRegExp(alias)}($|[^a-z0-9])`, "gi"),
+        "$1 $2"
+      );
+    } else {
+      result = result.replace(new RegExp(escapeRegExp(alias), "gi"), " ");
+    }
+  }
+  return result;
+}
+
+function containsAlias(text: string, alias: string): boolean {
+  if (!/^[a-z0-9 ]+$/i.test(alias) || alias.length > 2) return text.includes(alias);
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(alias)}(?:$|[^a-z0-9])`, "i").test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function matchedSynonym(lower: string, synonyms: string[]): string {

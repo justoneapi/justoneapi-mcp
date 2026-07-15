@@ -11,6 +11,7 @@ import { inferNextStep } from "../common/pagination.js";
 import { RuntimeContext } from "../common/runtime.js";
 import { tokenHash } from "../common/auth.js";
 import { truncateJson } from "../common/truncate.js";
+import { assertSafeEndpointResponseValue } from "../catalog/security.js";
 
 export const CallEndpointInput = z.object({
   endpoint_id: z.string().min(1),
@@ -30,18 +31,46 @@ export async function callEndpoint(input: z.infer<typeof CallEndpointInput>, ctx
   if (!token) {
     throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
   }
+  if (!ctx.config.privateCatalogTerms.length) {
+    ctx.logger.warn("call_endpoint_security_registry_missing", {
+      transport: ctx.transport,
+      tool: "call_endpoint",
+    });
+    throw new McpToolError({
+      code: "SECURITY_CONFIGURATION_REQUIRED",
+      message: defaultMessage("SECURITY_CONFIGURATION_REQUIRED"),
+    });
+  }
 
   const endpoint = await ctx.catalogManager.getEndpoint(input.endpoint_id);
   if (!endpoint) {
     throw new McpToolError({
       code: "ENDPOINT_NOT_FOUND",
-      message: `Unknown endpoint_id: ${input.endpoint_id}`,
+      message: defaultMessage("ENDPOINT_NOT_FOUND"),
     });
   }
 
   const started = Date.now();
   const normalized = normalizeParams(endpoint, input.params ?? {});
   const payload = await callUpstream(endpoint, normalized.apiParams, token, ctx);
+  try {
+    assertSafeEndpointResponseValue(
+      payload,
+      endpoint,
+      "call_endpoint response",
+      ctx.config.privateCatalogTerms
+    );
+  } catch {
+    ctx.logger.warn("unsafe_response_blocked", {
+      transport: ctx.transport,
+      tool: "call_endpoint",
+      endpoint_id: endpoint.endpoint_id,
+    });
+    throw new McpToolError({
+      code: "UNSAFE_RESPONSE",
+      message: defaultMessage("UNSAFE_RESPONSE"),
+    });
+  }
   const upstreamCode = Number(payload.code);
   const isSuccess = upstreamCode === 0;
 

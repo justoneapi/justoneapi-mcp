@@ -38,6 +38,11 @@ Authorization 请求头。
 }
 ```
 
+出于安全考虑，本地 `call_endpoint` 仅在受信任的运维环境同时提供机密的
+`JUSTONEAPI_PRIVATE_CATALOG_TERMS` 词表时启用。未配置时，接口检索和 Schema 查询只使用
+发布阶段已扫描的内置 catalog；直接调用、动态刷新、晋级和回滚均会安全失败。请勿把该词表
+写入会共享或公开的客户端配置。
+
 ### 本地 stdio
 
 也可以使用 `npx` 在本地运行 MCP 服务。

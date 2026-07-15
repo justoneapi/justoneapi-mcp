@@ -58,6 +58,11 @@ You can also run the MCP server locally with `npx`.
 }
 ```
 
+For security, local `call_endpoint` is enabled only in a trusted operator environment that also
+provides the confidential `JUSTONEAPI_PRIVATE_CATALOG_TERMS` registry. Without it, discovery and
+schema tools use only the release-scanned bundled catalog; direct calls, dynamic refresh, promotion,
+and rollback fail closed. Do not copy that registry into shared or public client configuration.
+
 ## Token
 
 Use your JustOneAPI token in one of these ways:

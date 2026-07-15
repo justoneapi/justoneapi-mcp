@@ -1,4 +1,4 @@
-import { McpToolError, errorResult } from "./errors.js";
+import { McpToolError, defaultMessage, errorResult } from "./errors.js";
 
 export type ToolContentResult = {
   isError?: boolean;
@@ -21,11 +21,10 @@ export async function runTool(fn: () => Promise<unknown> | unknown): Promise<Too
       return textJson(errorResult(error.payload), true);
     }
 
-    const message = error instanceof Error ? error.message : "Unknown error";
     return textJson(
       errorResult({
         code: "INTERNAL_ERROR",
-        message,
+        message: defaultMessage("INTERNAL_ERROR"),
       }),
       true
     );

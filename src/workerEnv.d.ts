@@ -1,6 +1,9 @@
 interface Env {
   JUSTONEAPI_ADMIN_TOKEN?: string;
   JUSTONEAPI_DEBUG?: string;
+  JUSTONEAPI_SEARCH_V2_ENABLED?: string;
+  JUSTONEAPI_PRIVATE_CATALOG_TERMS?: string;
+  JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS?: string;
   JUSTONEAPI_TIMEOUT_MS?: string;
   JUSTONEAPI_RETRY?: string;
 }
@@ -9,6 +12,9 @@ declare namespace Cloudflare {
   interface Env {
     JUSTONEAPI_ADMIN_TOKEN?: string;
     JUSTONEAPI_DEBUG?: string;
+    JUSTONEAPI_SEARCH_V2_ENABLED?: string;
+    JUSTONEAPI_PRIVATE_CATALOG_TERMS?: string;
+    JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS?: string;
     JUSTONEAPI_TIMEOUT_MS?: string;
     JUSTONEAPI_RETRY?: string;
   }

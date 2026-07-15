@@ -2,8 +2,7 @@ import { AppConfig } from "../config.js";
 
 export type OpenApiFetchResult = {
   openapiText: string;
-  openapiZhText?: string;
-  warning?: string;
+  openapiZhText: string;
 };
 
 export async function fetchOpenApiDocuments(config: AppConfig): Promise<OpenApiFetchResult> {
@@ -17,10 +16,7 @@ export async function fetchOpenApiDocuments(config: AppConfig): Promise<OpenApiF
   }
 
   if (chinese.status === "rejected") {
-    return {
-      openapiText: english.value,
-      warning: `Failed to fetch Chinese OpenAPI: ${chinese.reason}`,
-    };
+    throw new Error(`Failed to fetch Chinese OpenAPI: ${chinese.reason}`);
   }
 
   return {

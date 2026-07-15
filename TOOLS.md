@@ -43,8 +43,10 @@ Output includes:
   "normalized": {
     "platform": "xiaohongshu",
     "terms": ["note", "comment"],
-    "aliases": ["小红薯 -> xiaohongshu"]
+    "aliases": ["小红薯 -> xiaohongshu"],
+    "phrase": "笔记评论"
   },
+  "ranking_version": "v2",
   "confidence": "high",
   "results": [
     {
@@ -53,9 +55,14 @@ Output includes:
       "title": "笔记评论",
       "title_en": "Note Comments",
       "version": "v4",
-      "score": 180,
+      "score": 100,
       "required_params": ["note_id"],
-      "matched": ["platform:xiaohongshu", "endpoint:comment"]
+      "matched": ["platform:xiaohongshu", "capability:note comments"],
+      "matched_capabilities": [],
+      "matched_key_response_fields": [],
+      "relevant_limitations": [],
+      "match_reasons": ["platform:xiaohongshu", "capability:note comments"],
+      "alternatives": []
     }
   ],
   "next_step": "Call get_endpoint_schema with the best endpoint_id before call_endpoint."
@@ -85,6 +92,14 @@ Output includes:
   "title_en": "Video Search",
   "method": "GET",
   "path": "/api/kuaishou/search-video/v2",
+  "search_aliases": [],
+  "use_cases": [],
+  "key_response_fields": [],
+  "contract_status": {
+    "status": "pending",
+    "reason": "Insufficient verified response evidence"
+  },
+  "highlights": [],
   "params": [
     {
       "name": "keyword",
@@ -101,11 +116,35 @@ Output includes:
     "params": {
       "keyword": "<string>"
     }
-  }
+  },
+  "response_schema": {},
+  "response_example": {},
+  "response_example_synthetic": true
 }
 ```
 
-Use `name` values in `call_endpoint.params`. The real upstream parameter is kept as `api_name`.
+Use `name` values in `call_endpoint.params`. The public API request parameter is kept as `api_name`.
+
+Structured ranking is release-gated. It remains disabled unless the server operator sets
+`JUSTONEAPI_SEARCH_V2_ENABLED=true`; this lets catalog compatibility ship before the V2 ranking is
+enabled.
+
+Operators should inject registered private supplier names and domains through the secret
+`JUSTONEAPI_PRIVATE_CATALOG_TERMS` (JSON string array or comma/newline-separated values). The
+values are used only for fail-closed scanning and are never written into the catalog. Worker and
+package-release configurations require this secret to be non-empty; configure it before deploy or
+publish rather than placing the private registry in source control.
+
+`call_endpoint` also fails closed at runtime when this registry is unavailable. This applies to
+local stdio/npm operation as well as hosted transports: endpoint search and schema inspection stay
+available only from the release-scanned bundled catalog, while dynamic refresh, promotion,
+rollback, and direct calls remain disabled. A trusted operator must inject the confidential registry
+before those operations are enabled. The registry must never be placed in client configuration that
+will be shared publicly.
+
+Catalog refreshes are staged as a candidate release, verified, and then promoted to `active` while
+retaining `previous`. An administrator can invoke `refresh_catalog` with `{ "rollback": true }` to
+swap back to the previous validated release.
 
 ## call_endpoint
 

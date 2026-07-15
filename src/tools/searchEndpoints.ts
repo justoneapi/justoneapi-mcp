@@ -22,5 +22,15 @@ export async function searchEndpoints(
     throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
   }
   const bundle = await ctx.catalogManager.load();
-  return rankEndpoints(bundle.catalog.endpoints, input);
+  const result = rankEndpoints(bundle.catalog.endpoints, input, {
+    mode: ctx.config.searchV2Enabled ? "v2" : "legacy",
+  });
+  ctx.logger.info("endpoint_search", {
+    release_id: bundle.meta.release_id,
+    ranking_version: result.ranking_version,
+    no_results: result.results.length === 0,
+    confidence: result.confidence,
+    candidate_count: result.results.length,
+  });
+  return result;
 }

@@ -2,13 +2,33 @@ import { createHash } from "node:crypto";
 import {
   CatalogBundle,
   EndpointCatalogEntry,
+  EndpointContractStatus,
+  EndpointHighlight,
+  EndpointKeyResponseField,
   EndpointPagination,
   EndpointParam,
+  EndpointUseCase,
   JsonValue,
 } from "./types.js";
 import { normalizePlatform, splitWords, toSnakeCase, unique } from "./stringUtils.js";
 import { platformAliases, platformDisplayName } from "../search/dictionaries/platforms.js";
-import { DOMAIN_TERMS } from "../search/dictionaries/domainTerms.js";
+import { DOMAIN_TERMS, STOPWORDS } from "../search/dictionaries/domainTerms.js";
+import { normalizeHighlights } from "./highlights.js";
+import {
+  assertVerifiedResponseContract,
+  generateSyntheticExample,
+  projectResponseSchema,
+  schemaHash,
+  unverifiedResponseSchema,
+} from "./schema.js";
+import {
+  assertNoCredentialParameterValues,
+  assertSafeCatalogValue,
+  assertSafePublicValue,
+  isAllowedLegacyPaginationParameter,
+  isCredentialParameterName,
+  isLegacyPublicPaginationOperation,
+} from "./security.js";
 
 type OpenApiSchema = {
   type?: string;
@@ -16,6 +36,9 @@ type OpenApiSchema = {
   description?: string;
   default?: JsonValue;
   enum?: JsonValue[];
+  const?: JsonValue;
+  example?: JsonValue;
+  examples?: JsonValue[];
   nullable?: boolean;
   minimum?: number;
   maximum?: number;
@@ -42,17 +65,41 @@ type OpenApiOperation = {
   requestBody?: {
     content?: Record<string, { schema?: OpenApiSchema }>;
   };
-  responses?: unknown;
+  responses?: Record<string, { content?: Record<string, { schema?: unknown }> }>;
   deprecated?: boolean;
   "x-order"?: string | number;
   "x-api-version"?: string;
   "x-docs-hidden"?: boolean;
   "x-recommended"?: boolean;
-  "x-highlights"?: Array<{ type?: string; content?: string } | string>;
+  "x-highlights"?: unknown[];
+  "x-search-aliases"?: unknown;
+  "x-use-cases"?: unknown;
+  "x-key-response-fields"?: unknown;
+  "x-endpoint-family"?: string;
+  "x-contract-status"?: unknown;
 };
 
 type OpenApiDocument = {
   paths?: Record<string, Record<string, OpenApiOperation>>;
+  components?: Record<string, unknown>;
+  tags?: Array<{
+    name?: string;
+    description?: string;
+    "x-platform-id"?: string;
+    "x-platform-aliases"?: unknown;
+    "x-platform-detection-aliases"?: unknown;
+    "x-search-aliases"?: unknown;
+    "x-aliases"?: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
+type PlatformMetadata = {
+  name?: string;
+  description?: string;
+  descriptionEn?: string;
+  aliases: string[];
+  detectionAliases: string[];
 };
 
 export type BuildCatalogOptions = {
@@ -63,49 +110,139 @@ export type BuildCatalogOptions = {
   openapiText: string;
   openapiZhText?: string | null;
   generatedAt?: string;
+  forbiddenTerms?: string[];
+  requireLocalizedReleaseId?: boolean;
 };
 
 const VERSION_RE = /^v\d+$/i;
+export const CATALOG_GENERATOR_VERSION = "2";
 
 export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
 export function buildCatalogBundle(options: BuildCatalogOptions): CatalogBundle {
+  assertLocalizedOpenApiAlignment(
+    options.openapi,
+    options.openapiZh,
+    options.openapiZhText,
+    options.requireLocalizedReleaseId ?? false
+  );
   const endpoints: EndpointCatalogEntry[] = [];
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const openapiHash = sha256(options.openapiText);
+  const openapiZhHash = options.openapiZhText ? sha256(options.openapiZhText) : undefined;
   const zhOps = operationMap(options.openapiZh ?? undefined);
+  const platformMetadata = buildPlatformMetadata(options.openapi, options.openapiZh ?? undefined);
 
   for (const [path, pathItem] of Object.entries(options.openapi.paths ?? {})) {
     for (const [methodRaw, operation] of Object.entries(pathItem)) {
       if (methodRaw.startsWith("x-")) continue;
       const method = methodRaw.toUpperCase() as EndpointCatalogEntry["method"];
       if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) continue;
+      if (operation["x-docs-hidden"]) continue;
 
       const parsed = parsePath(path, operation);
       if (!parsed) continue;
 
       const zhOperation = zhOps.get(operationKey(path, methodRaw, operation));
-      endpoints.push(buildEndpoint(path, method, parsed, operation, zhOperation));
+      endpoints.push(
+        buildEndpoint(
+          path,
+          method,
+          parsed,
+          operation,
+          zhOperation,
+          options.openapi,
+          platformMetadata.get(parsed.platform) ??
+            operation.tags
+              ?.map((tag) => platformMetadata.get(`tag:${tag.toLowerCase()}`))
+              .find((metadata): metadata is PlatformMetadata => Boolean(metadata)),
+          options.forbiddenTerms
+        )
+      );
     }
   }
 
   endpoints.sort((a, b) => a.order - b.order || a.endpoint_id.localeCompare(b.endpoint_id));
   assertUniqueEndpointIds(endpoints);
-
-  return {
+  assertUniqueRecommendedVersions(endpoints);
+  const semanticHash = sha256(JSON.stringify(endpoints));
+  const bundle: CatalogBundle = {
     catalog: { endpoints },
     meta: {
-      generated_at: options.generatedAt ?? new Date().toISOString(),
+      release_id: catalogReleaseId(generatedAt, openapiHash, openapiZhHash, semanticHash),
+      generator_version: CATALOG_GENERATOR_VERSION,
+      generated_at: generatedAt,
       endpoint_count: endpoints.length,
       localization_available: Boolean(options.openapiZhText),
       source: {
         openapi_url: options.openapiUrl,
         openapi_zh_url: options.openapiZhUrl,
-        openapi_sha256: sha256(options.openapiText),
-        openapi_zh_sha256: options.openapiZhText ? sha256(options.openapiZhText) : undefined,
+        openapi_sha256: openapiHash,
+        openapi_zh_sha256: openapiZhHash,
       },
     },
   };
+  assertSafeCatalogValue(bundle, "catalog bundle", options.forbiddenTerms);
+  return bundle;
+}
+
+function assertLocalizedOpenApiAlignment(
+  openapi: OpenApiDocument,
+  openapiZh: OpenApiDocument | null | undefined,
+  openapiZhText: string | null | undefined,
+  requireReleaseId: boolean
+): void {
+  if (!openapiZh && !openapiZhText) return;
+  if (!openapiZh || !openapiZhText) {
+    throw new Error("English and Chinese OpenAPI documents are both required for localization");
+  }
+
+  const englishRelease = cleanOptionalString(openapi["x-openapi-release-id"]);
+  const chineseRelease = cleanOptionalString(openapiZh["x-openapi-release-id"]);
+  if (requireReleaseId && (!englishRelease || !chineseRelease)) {
+    throw new Error("English and Chinese OpenAPI release identifiers are required");
+  }
+  if (englishRelease || chineseRelease) {
+    if (!englishRelease || !chineseRelease || englishRelease !== chineseRelease) {
+      throw new Error("English and Chinese OpenAPI release identifiers do not match");
+    }
+  }
+
+  const englishOperations = localizedOperationKeys(openapi);
+  const chineseOperations = localizedOperationKeys(openapiZh);
+  if (
+    englishOperations.length !== chineseOperations.length ||
+    englishOperations.some((key, index) => key !== chineseOperations[index])
+  ) {
+    throw new Error("English and Chinese OpenAPI operation sets do not match");
+  }
+}
+
+function localizedOperationKeys(openapi: OpenApiDocument): string[] {
+  const methods = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
+  const keys: string[] = [];
+  for (const [path, pathItem] of Object.entries(openapi.paths ?? {})) {
+    for (const [method, operation] of Object.entries(pathItem)) {
+      if (!methods.has(method.toLowerCase())) continue;
+      keys.push(`${method.toLowerCase()} ${path} ${operation.operationId ?? ""}`);
+    }
+  }
+  return keys.sort();
+}
+
+function catalogReleaseId(
+  generatedAt: string,
+  openapiHash: string,
+  openapiZhHash: string | undefined,
+  semanticHash: string
+): string {
+  const timestamp = generatedAt.replace(/[^0-9]/g, "").slice(0, 14);
+  const contentHash = sha256(
+    `${CATALOG_GENERATOR_VERSION}:${openapiHash}:${openapiZhHash ?? ""}:${semanticHash}`
+  );
+  return `catalog-${timestamp}-${contentHash.slice(0, 12)}`;
 }
 
 function operationMap(doc: OpenApiDocument | undefined): Map<string, OpenApiOperation> {
@@ -149,14 +286,35 @@ function buildEndpoint(
   method: EndpointCatalogEntry["method"],
   parsed: { platform: string; methodName: string; version: string },
   operation: OpenApiOperation,
-  zhOperation?: OpenApiOperation
+  zhOperation: OpenApiOperation | undefined,
+  openapi: OpenApiDocument,
+  platformMetadata?: PlatformMetadata,
+  forbiddenTerms: string[] = []
 ): EndpointCatalogEntry {
-  const params = buildParams(operation, zhOperation);
+  const params = buildParams(path, method, operation, zhOperation);
+  const contractStatus = normalizeContractStatus(operation["x-contract-status"]);
+  const projectedResponseSchema = projectResponseSchema(responseSchemaFor(operation), openapi);
+  if (projectedResponseSchema !== undefined) {
+    assertSafePublicValue(projectedResponseSchema, "projected response schema", forbiddenTerms);
+  }
+  const responseSchema = responseSchemaForContractStatus(contractStatus, projectedResponseSchema);
+  const highlightsEn = normalizeHighlights(operation["x-highlights"]);
+  const highlights = normalizeHighlights(
+    zhOperation?.["x-highlights"] ?? operation["x-highlights"]
+  );
+  if (zhOperation) assertLocalizedHighlightAlignment(highlightsEn, highlights);
   const endpoint: EndpointCatalogEntry = {
     endpoint_id: `${parsed.platform}.${parsed.methodName}`,
     platform: parsed.platform,
-    platform_name: platformDisplayName(parsed.platform),
-    platform_aliases: platformAliases(parsed.platform),
+    platform_name: platformMetadata?.name ?? platformDisplayName(parsed.platform),
+    platform_description: platformMetadata?.description ?? platformMetadata?.descriptionEn,
+    platform_description_en: platformMetadata?.descriptionEn,
+    platform_aliases: unique([
+      ...platformAliases(parsed.platform),
+      ...(platformMetadata?.aliases ?? []),
+      ...(platformMetadata?.detectionAliases ?? []),
+    ]),
+    platform_detection_aliases: platformMetadata?.detectionAliases ?? [],
     method_name: parsed.methodName,
     operation_id: operation.operationId ?? `${method.toLowerCase()} ${path}`,
     method,
@@ -173,25 +331,106 @@ function buildEndpoint(
     deprecated: Boolean(operation.deprecated),
     recommended: Boolean(operation["x-recommended"]),
     content_type: requestContentType(operation),
-    highlights: normalizeHighlights(zhOperation?.["x-highlights"]),
-    highlights_en: normalizeHighlights(operation["x-highlights"]),
+    highlights,
+    highlights_en: highlightsEn,
+    search_aliases: unique([
+      ...normalizeStringArray(operation["x-search-aliases"]),
+      ...normalizeStringArray(zhOperation?.["x-search-aliases"]),
+    ]),
+    use_cases: mergeLocalizedUseCases(operation["x-use-cases"], zhOperation?.["x-use-cases"]),
+    key_response_fields: mergeLocalizedKeyResponseFields(
+      operation["x-key-response-fields"],
+      zhOperation?.["x-key-response-fields"]
+    ),
+    endpoint_family:
+      cleanOptionalString(operation["x-endpoint-family"]) ?? inferEndpointFamily(parsed),
+    contract_status: contractStatus,
+    response_schema: responseSchema,
+    response_schema_hash: schemaHash(responseSchema),
+    response_example: generateSyntheticExample(responseSchema),
     params,
     search_tokens: [],
   };
   endpoint.search_tokens = buildSearchTokens(endpoint);
   endpoint.pagination = inferPagination(params);
+  // Keep the diagnostic context static: the value being rejected can itself
+  // contain a registered private identifier and must never be echoed by an
+  // exception returned from catalog generation.
+  assertSafeCatalogValue(endpoint, "public endpoint", forbiddenTerms);
   return endpoint;
 }
 
-function buildParams(operation: OpenApiOperation, zhOperation?: OpenApiOperation): EndpointParam[] {
+function responseSchemaForContractStatus(
+  contractStatus: EndpointContractStatus,
+  projectedSchema: JsonValue | undefined
+): JsonValue {
+  if (contractStatus.status !== "verified") return unverifiedResponseSchema();
+  assertVerifiedResponseContract(projectedSchema);
+  return projectedSchema!;
+}
+
+function assertLocalizedHighlightAlignment(
+  english: EndpointHighlight[],
+  chinese: EndpointHighlight[]
+): void {
+  if (english.length !== chinese.length) {
+    throw new Error("English and Chinese OpenAPI highlight structures do not match");
+  }
+  for (let index = 0; index < english.length; index += 1) {
+    const left = english[index];
+    const right = chinese[index];
+    if (
+      left.type !== right.type ||
+      left.kind !== right.kind ||
+      left.concept !== right.concept ||
+      JSON.stringify(left.aliases ?? []) !== JSON.stringify(right.aliases ?? []) ||
+      JSON.stringify(left.fieldPaths ?? []) !== JSON.stringify(right.fieldPaths ?? [])
+    ) {
+      throw new Error("English and Chinese OpenAPI highlight machine metadata do not match");
+    }
+  }
+}
+
+function buildParams(
+  path: string,
+  method: EndpointCatalogEntry["method"],
+  operation: OpenApiOperation,
+  zhOperation?: OpenApiOperation
+): EndpointParam[] {
   const params: EndpointParam[] = [];
+  const operationIdentity = { path, method };
   const zhParamDescriptions = new Map<string, string>();
   for (const param of zhOperation?.parameters ?? []) {
     zhParamDescriptions.set(param.name, param.description ?? "");
   }
 
   for (const param of operation.parameters ?? []) {
-    if (param.name === "token") continue;
+    if (isCredentialParameterName(param.name)) {
+      if (
+        isAllowedLegacyPaginationParameter(operationIdentity, {
+          name: param.name,
+          in: param.in,
+          required: Boolean(param.required),
+          type: param.schema?.type,
+          default: param.schema?.default,
+          enum: param.schema?.enum,
+          const: param.schema?.const,
+          example: param.schema?.example,
+          examples: param.schema?.examples,
+          description: param.description,
+        })
+      ) {
+        params.push(fromOpenApiParam(param, zhParamDescriptions.get(param.name)));
+        continue;
+      }
+      assertValidLegacyPaginationException(operationIdentity, param.name);
+      assertNoCredentialParameterValues(
+        param.name,
+        param.schema as Record<string, unknown> | undefined,
+        `parameter ${param.name}`
+      );
+      continue;
+    }
     params.push(fromOpenApiParam(param, zhParamDescriptions.get(param.name)));
   }
 
@@ -200,7 +439,41 @@ function buildParams(operation: OpenApiOperation, zhOperation?: OpenApiOperation
     const [schema, zhSchema] = bodySchemas;
     const required = new Set(schema.required ?? []);
     for (const [apiName, property] of Object.entries(schema.properties ?? {})) {
-      if (apiName === "token") continue;
+      if (isCredentialParameterName(apiName)) {
+        if (
+          isAllowedLegacyPaginationParameter(operationIdentity, {
+            name: apiName,
+            in: "body",
+            required: required.has(apiName),
+            type: property.type,
+            default: property.default,
+            enum: property.enum,
+            const: property.const,
+            example: property.example,
+            examples: property.examples,
+            description: property.description,
+          })
+        ) {
+          params.push(
+            fromSchemaParam({
+              apiName,
+              location: "body",
+              required: required.has(apiName),
+              schema: property,
+              description: zhSchema?.properties?.[apiName]?.description,
+              descriptionEn: property.description,
+            })
+          );
+          continue;
+        }
+        assertValidLegacyPaginationException(operationIdentity, apiName);
+        assertNoCredentialParameterValues(
+          apiName,
+          property as Record<string, unknown>,
+          `request body parameter ${apiName}`
+        );
+        continue;
+      }
       params.push(
         fromSchemaParam({
           apiName,
@@ -214,7 +487,16 @@ function buildParams(operation: OpenApiOperation, zhOperation?: OpenApiOperation
     }
   }
 
-  return dedupeParams(params);
+  return dedupeParams(params, requestContentType(operation));
+}
+
+function assertValidLegacyPaginationException(
+  operation: { path: string; method: string },
+  parameterName: string
+): void {
+  if (parameterName === "cookies_buffer" && isLegacyPublicPaginationOperation(operation)) {
+    throw new Error("Invalid legacy public pagination parameter contract");
+  }
 }
 
 function fromOpenApiParam(param: OpenApiParameter, descriptionZh?: string): EndpointParam {
@@ -274,17 +556,236 @@ function requestContentType(operation: OpenApiOperation): string | undefined {
   return Object.keys(content)[0];
 }
 
-function normalizeHighlights(highlights: OpenApiOperation["x-highlights"]): string[] {
-  return (highlights ?? [])
-    .map((item) => (typeof item === "string" ? item : (item.content ?? "")))
-    .filter(Boolean);
+function responseSchemaFor(operation: OpenApiOperation): unknown {
+  const response = operation.responses?.["200"] ?? operation.responses?.["2XX"];
+  if (!response?.content) return undefined;
+  return (
+    response.content["application/json"]?.schema ??
+    response.content["application/*+json"]?.schema ??
+    Object.values(response.content).find((item) => item.schema)?.schema
+  );
 }
 
-function dedupeParams(params: EndpointParam[]): EndpointParam[] {
+function buildPlatformMetadata(
+  openapi: OpenApiDocument,
+  openapiZh?: OpenApiDocument
+): Map<string, PlatformMetadata> {
+  const result = new Map<string, PlatformMetadata>();
+  const zhById = new Map<string, NonNullable<OpenApiDocument["tags"]>[number]>();
+  for (const tag of openapiZh?.tags ?? []) {
+    const id = cleanOptionalString(tag["x-platform-id"]) ?? normalizePlatform(tag.name ?? "");
+    if (id) zhById.set(id, tag);
+  }
+  for (const tag of openapi.tags ?? []) {
+    const id = cleanOptionalString(tag["x-platform-id"]) ?? normalizePlatform(tag.name ?? "");
+    if (!id) continue;
+    const zhTag = zhById.get(id);
+    result.set(id, {
+      name: cleanOptionalString(zhTag?.name) ?? cleanOptionalString(tag.name),
+      description: cleanOptionalString(zhTag?.description) ?? cleanOptionalString(tag.description),
+      descriptionEn: cleanOptionalString(tag.description),
+      aliases: unique([
+        ...normalizeStringArray(tag["x-search-aliases"]),
+        ...normalizeStringArray(tag["x-aliases"]),
+        ...normalizeStringArray(tag["x-platform-aliases"]),
+        ...normalizeStringArray(zhTag?.["x-search-aliases"]),
+        ...normalizeStringArray(zhTag?.["x-aliases"]),
+        ...normalizeStringArray(zhTag?.["x-platform-aliases"]),
+      ]),
+      detectionAliases: unique([
+        ...normalizeStringArray(tag["x-platform-detection-aliases"]),
+        ...normalizeStringArray(zhTag?.["x-platform-detection-aliases"]),
+      ]),
+    });
+    if (tag.name) result.set(`tag:${tag.name.toLowerCase()}`, result.get(id)!);
+  }
+  return result;
+}
+
+function normalizeUseCases(value: unknown): EndpointUseCase[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string" && item.trim()) return [{ description: item.trim() }];
+    if (!isObject(item)) return [];
+    const description = cleanOptionalString(item.description) ?? cleanOptionalString(item.content);
+    const title = cleanOptionalString(item.title) ?? cleanOptionalString(item.name);
+    const id = cleanOptionalString(item.id);
+    if (!description && !title && !id) return [];
+    const normalized: EndpointUseCase = {
+      id,
+      title,
+      description,
+      aliases: normalizeStringArray(item.aliases),
+    };
+    if (!normalized.aliases?.length) delete normalized.aliases;
+    return [normalized];
+  });
+}
+
+function mergeLocalizedUseCases(englishValue: unknown, chineseValue: unknown): EndpointUseCase[] {
+  const english = normalizeUseCases(englishValue);
+  if (chineseValue === undefined) return english;
+  const chinese = normalizeUseCases(chineseValue);
+  if (english.length !== chinese.length) {
+    throw new Error("English and Chinese OpenAPI use-case structures do not match");
+  }
+  const localizedById = new Map(
+    chinese.filter((item) => item.id).map((item) => [item.id!, item] as const)
+  );
+  const consumed = new Set<EndpointUseCase>();
+  const merged = english.map((item, index) => {
+    const localized = item.id ? localizedById.get(item.id) : chinese[index];
+    if (!localized || (item.id && localized.id !== item.id) || consumed.has(localized)) {
+      throw new Error("English and Chinese OpenAPI use-case identifiers do not match");
+    }
+    consumed.add(localized);
+    return compactObject<EndpointUseCase>({
+      id: item.id,
+      title: localized.title ?? item.title,
+      title_en: item.title,
+      description: localized.description ?? item.description,
+      description_en: item.description,
+      aliases: unique([...(item.aliases ?? []), ...(localized.aliases ?? [])]),
+    });
+  });
+  if (consumed.size !== chinese.length) {
+    throw new Error("English and Chinese OpenAPI use-case structures do not match");
+  }
+  return merged;
+}
+
+function normalizeKeyResponseFields(value: unknown): EndpointKeyResponseField[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string" && item.trim()) {
+      const text = item.trim();
+      return [text.startsWith("$") ? { path: text } : { name: text }];
+    }
+    if (!isObject(item)) return [];
+    const normalized: EndpointKeyResponseField = {
+      path: cleanOptionalString(item.path),
+      name: cleanOptionalString(item.name),
+      description: cleanOptionalString(item.description),
+      aliases: normalizeStringArray(item.aliases),
+      availability: cleanOptionalString(item.availability),
+    };
+    if (!normalized.path && !normalized.name) return [];
+    if (!normalized.aliases?.length) delete normalized.aliases;
+    return [normalized];
+  });
+}
+
+function mergeLocalizedKeyResponseFields(
+  englishValue: unknown,
+  chineseValue: unknown
+): EndpointKeyResponseField[] {
+  const english = normalizeKeyResponseFields(englishValue);
+  if (chineseValue === undefined) return english;
+  const chinese = normalizeKeyResponseFields(chineseValue);
+  if (english.length !== chinese.length) {
+    throw new Error("English and Chinese OpenAPI key-response-field structures do not match");
+  }
+  const localizedByPath = new Map(
+    chinese.filter((field) => field.path).map((field) => [field.path!, field] as const)
+  );
+  const consumed = new Set<EndpointKeyResponseField>();
+  const merged = english.map((field, index) => {
+    const localized = field.path ? localizedByPath.get(field.path) : chinese[index];
+    if (!localized || (field.path && localized.path !== field.path) || consumed.has(localized)) {
+      throw new Error("English and Chinese OpenAPI key-response-field paths do not match");
+    }
+    consumed.add(localized);
+    return compactObject<EndpointKeyResponseField>({
+      path: field.path,
+      name: localized.name ?? field.name,
+      name_en: field.name,
+      description: localized.description ?? field.description,
+      description_en: field.description,
+      aliases: unique([...(field.aliases ?? []), ...(localized.aliases ?? [])]),
+      availability: field.availability,
+    });
+  });
+  if (consumed.size !== chinese.length) {
+    throw new Error("English and Chinese OpenAPI key-response-field structures do not match");
+  }
+  return merged;
+}
+
+function compactObject<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([, item]) => item !== undefined && (!Array.isArray(item) || item.length > 0)
+    )
+  ) as T;
+}
+
+function normalizeContractStatus(value: unknown): EndpointContractStatus {
+  if (typeof value === "string") return contractStatusFromParts(value);
+  if (isObject(value)) {
+    return contractStatusFromParts(
+      cleanOptionalString(value.status) ?? "pending",
+      cleanOptionalString(value.reason),
+      cleanOptionalString(value.revision)
+    );
+  }
+  return {
+    status: "pending",
+    reason: "Insufficient verified response evidence",
+  };
+}
+
+function contractStatusFromParts(
+  rawStatus: string,
+  reason?: string,
+  revision?: string
+): EndpointContractStatus {
+  const status = rawStatus.toLowerCase();
+  if (!["verified", "partial", "pending", "stale"].includes(status)) {
+    throw new Error("Invalid x-contract-status");
+  }
+  return {
+    status: status as EndpointContractStatus["status"],
+    reason,
+    revision,
+  };
+}
+
+function inferEndpointFamily(parsed: { platform: string; methodName: string }): string {
+  const methodFamily = parsed.methodName.replace(/_v\d+$/i, "");
+  return `${parsed.platform}_${methodFamily}`.replace(/_+/g, "_");
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return unique(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+}
+
+function cleanOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function dedupeParams(params: EndpointParam[], contentType?: string): EndpointParam[] {
+  const formBodyNames =
+    contentType === "application/x-www-form-urlencoded"
+      ? new Set(params.filter((param) => param.in === "body").map((param) => param.api_name))
+      : new Set<string>();
   const seen = new Set<string>();
   const result: EndpointParam[] = [];
   for (const param of params) {
-    const key = `${param.in}:${param.name}`;
+    // springdoc may emit the same form field both as a query parameter and in
+    // the form requestBody. MCP sends form endpoints in the body, so retain the
+    // body representation and avoid duplicate required-parameter checks.
+    if (param.in === "query" && formBodyNames.has(param.api_name)) continue;
+    const key = param.api_name;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(param);
@@ -293,6 +794,10 @@ function dedupeParams(params: EndpointParam[]): EndpointParam[] {
 }
 
 function buildSearchTokens(endpoint: EndpointCatalogEntry): string[] {
+  const capabilityHighlights = [
+    ...normalizeHighlights(endpoint.highlights),
+    ...normalizeHighlights(endpoint.highlights_en),
+  ].filter((highlight) => highlight.kind === "CAPABILITY");
   const values = [
     endpoint.endpoint_id,
     endpoint.platform,
@@ -307,16 +812,46 @@ function buildSearchTokens(endpoint: EndpointCatalogEntry): string[] {
     endpoint.description_en,
     ...endpoint.tags,
     ...endpoint.tags_en,
+    ...(endpoint.search_aliases ?? []),
+    ...(endpoint.use_cases ?? []).flatMap((useCase) => [
+      useCase.id ?? "",
+      useCase.title ?? "",
+      useCase.title_en ?? "",
+      useCase.description ?? "",
+      useCase.description_en ?? "",
+      ...(useCase.aliases ?? []),
+    ]),
+    ...(endpoint.key_response_fields ?? [])
+      .filter(isGenerallyAvailableKeyField)
+      .flatMap((field) => [
+        field.path ?? "",
+        field.name ?? "",
+        field.name_en ?? "",
+        field.description ?? "",
+        field.description_en ?? "",
+        ...(field.aliases ?? []),
+      ]),
+    ...capabilityHighlights.flatMap((highlight) => [
+      highlight.concept ?? "",
+      highlight.title ?? "",
+      highlight.content,
+      ...(highlight.aliases ?? []),
+      ...(highlight.fieldPaths ?? []),
+    ]),
     ...endpoint.params.flatMap((param) => [
       param.name,
       param.api_name,
       param.description,
       param.description_en,
     ]),
-    ...Object.entries(DOMAIN_TERMS).flatMap(([canonical, aliases]) => [
-      canonical,
-      ...aliases.filter((alias) => endpointText(endpoint).includes(alias.toLowerCase())),
-    ]),
+    ...Object.entries(DOMAIN_TERMS).flatMap(([canonical, aliases]) => {
+      const matchedAliases = aliases.filter((alias) =>
+        endpointText(endpoint).includes(alias.toLowerCase())
+      );
+      return matchedAliases.length || endpointText(endpoint).includes(canonical)
+        ? [canonical, ...matchedAliases]
+        : [];
+    }),
   ];
 
   return unique(values.flatMap((value) => splitSearchValue(value)));
@@ -330,6 +865,32 @@ function endpointText(endpoint: EndpointCatalogEntry): string {
     endpoint.title_en,
     endpoint.description,
     endpoint.description_en,
+    ...(endpoint.search_aliases ?? []),
+    ...(endpoint.use_cases ?? []).flatMap((useCase) => [
+      useCase.title ?? "",
+      useCase.title_en ?? "",
+      useCase.description ?? "",
+      useCase.description_en ?? "",
+      ...(useCase.aliases ?? []),
+    ]),
+    ...(endpoint.key_response_fields ?? [])
+      .filter(isGenerallyAvailableKeyField)
+      .flatMap((field) => [
+        field.path ?? "",
+        field.name ?? "",
+        field.name_en ?? "",
+        field.description ?? "",
+        field.description_en ?? "",
+        ...(field.aliases ?? []),
+      ]),
+    ...[...normalizeHighlights(endpoint.highlights), ...normalizeHighlights(endpoint.highlights_en)]
+      .filter((highlight) => highlight.kind === "CAPABILITY")
+      .flatMap((highlight) => [
+        highlight.concept ?? "",
+        highlight.title ?? "",
+        highlight.content,
+        ...(highlight.aliases ?? []),
+      ]),
   ]
     .join(" ")
     .toLowerCase();
@@ -339,7 +900,14 @@ function splitSearchValue(value: string): string[] {
   const normalized = value.toLowerCase();
   const asciiWords = splitWords(normalized);
   const cjkChunks = normalized.match(/[\u4e00-\u9fff]{1,12}/g) ?? [];
-  return [...asciiWords, ...cjkChunks, normalized.trim()].filter(Boolean);
+  return [...asciiWords, ...cjkChunks, normalized.trim()].filter(
+    (token) => Boolean(token) && !STOPWORDS.has(token)
+  );
+}
+
+function isGenerallyAvailableKeyField(field: EndpointKeyResponseField): boolean {
+  if (!field.availability) return true;
+  return ["all", "stable", "universal", "all_variants"].includes(field.availability.toLowerCase());
 }
 
 function inferPagination(params: EndpointParam[]): EndpointPagination | undefined {
@@ -357,6 +925,7 @@ function inferPagination(params: EndpointParam[]): EndpointPagination | undefine
     "search_id",
     "buffer",
     "last_buffer",
+    "cookies_buffer",
   ].filter((name) => names.has(name));
 
   if (!matched.length) return undefined;
@@ -381,5 +950,20 @@ function assertUniqueEndpointIds(endpoints: EndpointCatalogEntry[]) {
   }
   if (duplicates.length) {
     throw new Error(`Duplicate endpoint_id values: ${duplicates.join(", ")}`);
+  }
+}
+
+function assertUniqueRecommendedVersions(endpoints: EndpointCatalogEntry[]) {
+  const recommendedByFamily = new Map<string, string>();
+  for (const endpoint of endpoints) {
+    if (!endpoint.recommended) continue;
+    const family = endpoint.endpoint_family ?? endpoint.endpoint_id;
+    const existing = recommendedByFamily.get(family);
+    if (existing) {
+      throw new Error(
+        `Endpoint family ${family} has multiple recommended versions: ${existing}, ${endpoint.endpoint_id}`
+      );
+    }
+    recommendedByFamily.set(family, endpoint.endpoint_id);
   }
 }

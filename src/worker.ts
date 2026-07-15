@@ -66,6 +66,8 @@ function getWorkerCatalogManager(env: Env): CatalogManager {
     openapiUrl: config.openapiUrl,
     openapiZhUrl: config.openapiZhUrl,
     ttl: config.catalogMemoryTtlMs,
+    searchV2Enabled: config.searchV2Enabled,
+    privateCatalogTerms: config.privateCatalogTerms.join("\0"),
   });
   if (!cachedManager || cachedManager.key !== key) {
     cachedManager = {
@@ -106,6 +108,7 @@ async function healthResponse(
   };
 
   if (isAdmin && bundle) {
+    body.catalog_release_id = bundle.meta.release_id;
     body.catalog_generated_at = bundle.meta.generated_at;
     body.last_refresh = await manager.loadLastRefresh();
     body.openapi_sha256 = bundle.meta.source.openapi_sha256.slice(0, 12);

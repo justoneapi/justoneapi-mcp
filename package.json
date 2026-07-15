@@ -11,8 +11,9 @@
     "dev": "tsx src/index.ts",
     "dev:stdio": "tsx src/index.ts",
     "dev:worker": "npx wrangler dev",
-    "deploy:worker": "npx wrangler deploy",
+    "deploy:worker": "npm run build:catalog && npm run verify:catalog && npx wrangler deploy",
     "build:catalog": "tsx scripts/build-catalog.ts",
+    "verify:catalog": "tsx scripts/verify-bundled-catalog.ts",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc",
     "start": "node dist/src/index.js",
@@ -21,7 +22,7 @@
     "lint:fix": "eslint \"{src,scripts,tests}/**/*.ts\" --fix",
     "format": "prettier --write \"{src,scripts,tests}/**/*.ts\" \"*.md\"",
     "format:check": "prettier --check \"{src,scripts,tests}/**/*.ts\" \"*.md\"",
-    "prepublishOnly": "npm run build:catalog && npm run build && npm test"
+    "prepublishOnly": "npm run build:catalog && npm run verify:catalog && npm run build && npm test"
   },
   "keywords": [
     "mcp",

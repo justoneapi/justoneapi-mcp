@@ -9,6 +9,14 @@ import {
   RefreshResult,
 } from "./types.js";
 import { normalizeHighlights } from "./highlights.js";
+import {
+  assertCatalogSafetyContext,
+  assertPromotedCatalogBundle,
+  catalogBundleSha256,
+  catalogReleaseAttestation,
+  catalogSafetyContext,
+  CatalogSafetyContextMismatchError,
+} from "./release.js";
 import { schemaHash } from "./schema.js";
 import { assertSafeCatalogValue } from "./security.js";
 
@@ -29,11 +37,10 @@ export class CatalogManager {
     }
 
     const stored = await this.safeLoadStore();
-    const bundle = stored ?? this.bundled;
+    const bundle = stored ?? this.safeBundledCatalog();
     if (!bundle.catalog.endpoints.length) {
       throw new Error("Catalog is empty");
     }
-    assertSafeCatalogValue(bundle, "loaded catalog", this.config.privateCatalogTerms);
 
     this.cached = bundle;
     this.cachedAt = now;
@@ -77,7 +84,7 @@ export class CatalogManager {
       return result;
     }
     const previous = await this.safeLoadStore();
-    const previousBundle = previous ?? this.bundled;
+    const previousBundle = previous ?? this.safeBundledCatalog();
 
     let lockAcquired = false;
     if (this.store.tryAcquireRefreshLock) {
@@ -124,8 +131,16 @@ export class CatalogManager {
       );
       const generatorChanged =
         previousBundle.meta.generator_version !== next.meta.generator_version;
+      const securityChanged =
+        JSON.stringify(previousBundle.meta.security) !== JSON.stringify(next.meta.security);
+      const needsPromotion = !previous;
       const changed =
-        structureChanged || localizationChanged || semanticChanged || generatorChanged;
+        structureChanged ||
+        localizationChanged ||
+        semanticChanged ||
+        generatorChanged ||
+        securityChanged ||
+        needsPromotion;
 
       if (changed) {
         await this.publishCandidate(next);
@@ -232,8 +247,9 @@ export class CatalogManager {
         },
       };
     }
+    const safety = catalogSafetyContext(this.config.privateCatalogTerms);
     if (this.store.loadPrevious) {
-      const preview = await this.store.loadPrevious();
+      const preview = await this.store.loadPrevious(safety);
       if (!preview) {
         return {
           success: false,
@@ -245,13 +261,10 @@ export class CatalogManager {
           },
         };
       }
-      assertSafeCatalogValue(
-        preview,
-        "rollback candidate catalog",
-        this.config.privateCatalogTerms
-      );
+      assertPromotedCatalogBundle(preview);
+      assertCatalogSafetyContext(preview.meta.security, safety);
     }
-    const previous = await this.store.rollback();
+    const previous = await this.store.rollback(safety);
     if (!previous) {
       return {
         success: false,
@@ -263,7 +276,8 @@ export class CatalogManager {
         },
       };
     }
-    assertSafeCatalogValue(previous, "rollback catalog", this.config.privateCatalogTerms);
+    assertPromotedCatalogBundle(previous);
+    assertCatalogSafetyContext(previous.meta.security, safety);
     this.setMemoryCache(previous);
     return {
       success: true,
@@ -274,22 +288,34 @@ export class CatalogManager {
   }
 
   private async safeLoadStore(): Promise<CatalogBundle | null> {
-    // A persisted or remote catalog has runtime provenance that the bundled,
-    // release-scanned catalog does not. Without the confidential registry we
-    // cannot validate unknown private identifiers, so only the bundled catalog
-    // may be activated for discovery.
-    if (!this.config.privateCatalogTerms.length) return null;
+    // Only releases that crossed saveCandidate -> reload -> confidential scan
+    // -> promote may be activated here. Never trust the legacy compatibility
+    // bundle on a request path: it has no durable promotion attestation. The
+    // bundled catalog is release-scanned at build time and is the safe fallback.
+    if (!this.config.privateCatalogTerms.length || !this.store.loadPromoted) return null;
+    const safety = catalogSafetyContext(this.config.privateCatalogTerms);
     try {
-      const bundle = this.store.loadActive
-        ? await this.store.loadActive()
-        : await this.store.load();
-      if (bundle) {
-        assertSafeCatalogValue(bundle, "stored catalog", this.config.privateCatalogTerms);
+      return await this.store.loadPromoted(safety);
+    } catch (error) {
+      if (error instanceof CatalogSafetyContextMismatchError) {
+        // A newly deployed bundled release may carry the matching registry
+        // revision while KV still points at a release attested under the old
+        // revision. Only fall back after proving the bundled release matches.
+        this.safeBundledCatalog();
       }
-      return bundle;
-    } catch {
       return null;
     }
+  }
+
+  private safeBundledCatalog(): CatalogBundle {
+    if (this.config.privateCatalogTerms.length) {
+      assertPromotedCatalogBundle(this.bundled);
+      assertCatalogSafetyContext(
+        this.bundled.meta.security,
+        catalogSafetyContext(this.config.privateCatalogTerms)
+      );
+    }
+    return this.bundled;
   }
 
   private async publishCandidate(next: CatalogBundle): Promise<void> {
@@ -306,13 +332,18 @@ export class CatalogManager {
         throw new Error("Catalog candidate release verification failed");
       }
       assertSafeCatalogValue(staged, "candidate catalog", this.config.privateCatalogTerms);
+      if (catalogBundleSha256(staged) !== catalogBundleSha256(next)) {
+        throw new Error("Catalog candidate content verification failed");
+      }
       if (bundleSemanticFingerprint(staged) !== bundleSemanticFingerprint(next)) {
         throw new Error("Catalog candidate semantic verification failed");
       }
-      await this.store.promoteCandidate(next.meta.release_id);
+      await this.store.promoteCandidate(
+        catalogReleaseAttestation(staged, this.config.privateCatalogTerms)
+      );
       return;
     }
-    await this.store.save(next);
+    throw new Error("Catalog store does not support verified candidate promotion");
   }
 
   private async saveLastRefreshBestEffort(value: unknown): Promise<void> {

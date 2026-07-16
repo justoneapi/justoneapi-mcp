@@ -41,6 +41,9 @@ async function main() {
     expected.meta.generator_version === bundledCatalog.meta.generator_version
       ? null
       : "generator version",
+    JSON.stringify(expected.meta.security) === JSON.stringify(bundledCatalog.meta.security)
+      ? null
+      : "security revision",
     expected.meta.release_id === bundledCatalog.meta.release_id ? null : "release ID",
     JSON.stringify(expected.catalog.endpoints) === JSON.stringify(bundledCatalog.catalog.endpoints)
       ? null

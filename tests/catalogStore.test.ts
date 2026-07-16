@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,8 +6,11 @@ import { buildCatalogBundle } from "../src/catalog/build.js";
 import { CatalogManager } from "../src/catalog/manager.js";
 import { CatalogBundle, CatalogStore } from "../src/catalog/types.js";
 import { FileCatalogStore } from "../src/node/fileCatalogStore.js";
+import { catalogReleaseAttestation, catalogSafetyContext } from "../src/catalog/release.js";
 
 const tempDirs: string[] = [];
+const PRIVATE_TERMS = ["private-registry-canary"];
+const SAFETY = catalogSafetyContext(PRIVATE_TERMS);
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -15,6 +18,14 @@ afterEach(async () => {
 });
 
 function bundle(summary: string, generatedAt: string): CatalogBundle {
+  return bundleWithTerms(summary, generatedAt, PRIVATE_TERMS);
+}
+
+function bundleWithTerms(
+  summary: string,
+  generatedAt: string,
+  privateTerms: string[]
+): CatalogBundle {
   const openapi = {
     paths: {
       "/api/web/test/v1": {
@@ -33,6 +44,7 @@ function bundle(summary: string, generatedAt: string): CatalogBundle {
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
     openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
     generatedAt,
+    forbiddenTerms: privateTerms,
   });
 }
 
@@ -65,6 +77,7 @@ function localizedBundle(
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
     openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
     generatedAt,
+    forbiddenTerms: PRIVATE_TERMS,
     requireLocalizedReleaseId: true,
   });
 }
@@ -78,7 +91,7 @@ function managerConfig() {
     catalogMemoryTtlMs: 60_000,
     debug: false,
     searchV2Enabled: false,
-    privateCatalogTerms: ["private-registry-canary"],
+    privateCatalogTerms: PRIVATE_TERMS,
     timeoutMs: 1_000,
     retry: 0,
   };
@@ -92,23 +105,87 @@ describe("catalog active/previous release store", () => {
     const legacy = bundle("Legacy title", "2026-07-14T00:00:00.000Z");
     delete legacy.meta.release_id;
     const next = bundle("New title", "2026-07-15T00:00:00.000Z");
+    const latest = bundle("Latest title", "2026-07-16T00:00:00.000Z");
 
     await store.save(legacy);
     await store.saveCandidate(next);
     expect((await store.loadActive())?.catalog.endpoints[0].title_en).toBe("Legacy title");
+    await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
     expect((await store.loadCandidate())?.meta.release_id).toBe(next.meta.release_id);
 
-    await store.promoteCandidate(next.meta.release_id!);
+    await store.promoteCandidate(catalogReleaseAttestation(next, PRIVATE_TERMS));
     expect((await store.load())?.catalog.endpoints[0].title_en).toBe("New title");
-    expect((await store.loadPrevious())?.catalog.endpoints[0].title_en).toBe("Legacy title");
+    expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("New title");
+    await expect(store.loadPrevious(SAFETY)).resolves.toBeNull();
+    await expect(store.rollback(SAFETY)).resolves.toBeNull();
 
-    const rolledBack = await store.rollback();
-    expect(rolledBack?.catalog.endpoints[0].title_en).toBe("Legacy title");
-    expect((await store.loadActive())?.catalog.endpoints[0].title_en).toBe("Legacy title");
-    expect((await store.loadPrevious())?.catalog.endpoints[0].title_en).toBe("New title");
+    await store.saveCandidate(latest);
+    await store.promoteCandidate(catalogReleaseAttestation(latest, PRIVATE_TERMS));
+    expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("Latest title");
+    expect((await store.loadPrevious(SAFETY))?.catalog.endpoints[0].title_en).toBe("New title");
+
+    const rolledBack = await store.rollback(SAFETY);
+    expect(rolledBack?.catalog.endpoints[0].title_en).toBe("New title");
+    expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("New title");
+    expect((await store.loadPrevious(SAFETY))?.catalog.endpoints[0].title_en).toBe("Latest title");
   });
 
-  it("does not report a committed promotion as failed when the legacy mirror cannot be written", async () => {
+  it("rejects a promoted pointer when the immutable release envelope was changed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const next = bundle("New title", "2026-07-15T00:00:00.000Z");
+
+    await store.saveCandidate(next);
+    const releaseFile = join(dir, "catalog-releases", `${next.meta.release_id}.json`);
+    const changed = structuredClone(next);
+    changed.catalog.endpoints[0].description_en = "Changed after the candidate was attested.";
+    await writeFile(releaseFile, `${JSON.stringify(changed)}\n`, "utf8");
+
+    await expect(
+      store.promoteCandidate(catalogReleaseAttestation(next, PRIVATE_TERMS))
+    ).rejects.toThrow("Catalog candidate content digest mismatch");
+    await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
+  });
+
+  it("rejects an active release whose payload changed without changing its release ID", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
+    await store.saveCandidate(active);
+    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
+
+    const changed = structuredClone(active);
+    changed.catalog.endpoints[0].description_en = "Changed after promotion.";
+    await writeFile(
+      join(dir, "catalog-releases", `${active.meta.release_id}.json`),
+      `${JSON.stringify(changed)}\n`,
+      "utf8"
+    );
+
+    await expect(store.loadPromoted(SAFETY)).rejects.toThrow(
+      "Promoted catalog content digest mismatch"
+    );
+    const bundled = bundle("Bundled fallback", "2026-07-14T00:00:00.000Z");
+    await expect(new CatalogManager(store, bundled, managerConfig()).load()).resolves.toBe(bundled);
+  });
+
+  it("does not overwrite an immutable release with different content", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const original = bundle("Original title", "2026-07-15T00:00:00.000Z");
+    const changed = structuredClone(original);
+    changed.catalog.endpoints[0].description_en = "Different content under the same release ID.";
+
+    await store.saveCandidate(original);
+    await expect(store.saveCandidate(changed)).rejects.toThrow(
+      "Catalog release ID already exists with different content"
+    );
+  });
+
+  it("does not switch the active pointer when the legacy mirror cannot be written", async () => {
     const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
     tempDirs.push(dir);
     const store = new FileCatalogStore(dir);
@@ -116,19 +193,66 @@ describe("catalog active/previous release store", () => {
     const next = bundle("New title", "2026-07-15T00:00:00.000Z");
 
     await store.saveCandidate(legacy);
-    await store.promoteCandidate(legacy.meta.release_id!);
+    await store.promoteCandidate(catalogReleaseAttestation(legacy, PRIVATE_TERMS));
     await store.saveCandidate(next);
+    const pointersFile = join(dir, "catalog-pointers.json");
+    const pointersBefore = await readFile(pointersFile, "utf8");
     await rm(join(dir, "catalog-bundle.json"), { force: true });
     await mkdir(join(dir, "catalog-bundle.json"));
 
-    await expect(store.promoteCandidate(next.meta.release_id!)).resolves.toBeUndefined();
-    expect((await store.loadActive())?.catalog.endpoints[0].title_en).toBe("New title");
-    expect((await store.loadPrevious())?.catalog.endpoints[0].title_en).toBe("Legacy title");
+    await expect(
+      store.promoteCandidate(catalogReleaseAttestation(next, PRIVATE_TERMS))
+    ).rejects.toThrow();
+    expect(await readFile(pointersFile, "utf8")).toBe(pointersBefore);
+    expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("Legacy title");
+    await expect(store.loadPrevious(SAFETY)).resolves.toBeNull();
+  });
 
-    await expect(store.rollback()).resolves.toMatchObject({
-      catalog: { endpoints: [expect.objectContaining({ title_en: "Legacy title" })] },
-    });
-    expect((await store.loadActive())?.catalog.endpoints[0].title_en).toBe("Legacy title");
+  it("does not switch rollback pointers when the legacy mirror cannot be written", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const previous = bundle("Previous title", "2026-07-14T00:00:00.000Z");
+    const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
+    await store.saveCandidate(previous);
+    await store.promoteCandidate(catalogReleaseAttestation(previous, PRIVATE_TERMS));
+    await store.saveCandidate(active);
+    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
+    const pointersFile = join(dir, "catalog-pointers.json");
+    const pointersBefore = await readFile(pointersFile, "utf8");
+    await rm(join(dir, "catalog-bundle.json"), { force: true });
+    await mkdir(join(dir, "catalog-bundle.json"));
+
+    await expect(store.rollback(SAFETY)).rejects.toThrow();
+    expect(await readFile(pointersFile, "utf8")).toBe(pointersBefore);
+    expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("Active title");
+  });
+
+  it("does not switch rollback pointers when the previous release was corrupted", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const previous = bundle("Previous title", "2026-07-14T00:00:00.000Z");
+    const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
+    await store.saveCandidate(previous);
+    await store.promoteCandidate(catalogReleaseAttestation(previous, PRIVATE_TERMS));
+    await store.saveCandidate(active);
+    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
+    const pointersFile = join(dir, "catalog-pointers.json");
+    const pointersBefore = await readFile(pointersFile, "utf8");
+
+    const changed = structuredClone(previous);
+    changed.catalog.endpoints[0].description_en = "Corrupted previous release.";
+    await writeFile(
+      join(dir, "catalog-releases", `${previous.meta.release_id}.json`),
+      `${JSON.stringify(changed)}\n`,
+      "utf8"
+    );
+
+    await expect(store.rollback(SAFETY)).rejects.toThrow(
+      "Promoted catalog content digest mismatch"
+    );
+    expect(await readFile(pointersFile, "utf8")).toBe(pointersBefore);
   });
 
   it("does not promote a staged candidate whose semantic fingerprint changed", async () => {
@@ -188,6 +312,50 @@ describe("catalog active/previous release store", () => {
     expect(promoted).toBe(false);
   });
 
+  it("keeps the confidential registry scan at the candidate promotion boundary", async () => {
+    const current = bundle("Current title", "2026-07-14T00:00:00.000Z");
+    let candidate: CatalogBundle | null = null;
+    const promoteCandidate = vi.fn(async () => undefined);
+    const store: CatalogStore = {
+      load: async () => current,
+      save: async () => undefined,
+      saveCandidate: async (value) => {
+        candidate = structuredClone(value);
+        candidate.meta.generated_at = "private-registry-canary";
+      },
+      loadCandidate: async () => candidate,
+      promoteCandidate,
+    };
+    const nextOpenapi = {
+      "x-openapi-release-id": "release-next",
+      paths: {
+        "/api/web/test/v1": {
+          get: {
+            summary: "Next title",
+            description: "Get public web test data.",
+            operationId: "getWebTestV1",
+            responses: {},
+          },
+        },
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(nextOpenapi), { status: 200 }))
+    );
+
+    await expect(
+      new CatalogManager(store, current, managerConfig()).refresh()
+    ).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: "CATALOG_UNSAFE",
+        message: "Catalog refresh failed public safety validation.",
+      },
+    });
+    expect(promoteCandidate).not.toHaveBeenCalled();
+  });
+
   it("publishes a semantic correction even when both OpenAPI source hashes are unchanged", async () => {
     const english = releasedDocument("Canonical title", "Canonical public meaning.");
     const chinese = releasedDocument("规范标题", "规范的公开含义。");
@@ -223,7 +391,9 @@ describe("catalog active/previous release store", () => {
       modified: ["web.test_v1"],
     });
     expect(result.release_id).not.toBe(current.meta.release_id);
-    expect(promoteCandidate).toHaveBeenCalledWith(result.release_id);
+    expect(promoteCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({ release_id: result.release_id })
+    );
     await expect(manager.load()).resolves.toMatchObject({
       catalog: {
         endpoints: [expect.objectContaining({ description_en: "Canonical public meaning." })],
@@ -268,7 +438,9 @@ describe("catalog active/previous release store", () => {
       modified: [],
     });
     expect(result.release_id).not.toBe(current.meta.release_id);
-    expect(promoteCandidate).toHaveBeenCalledWith(result.release_id);
+    expect(promoteCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({ release_id: result.release_id })
+    );
   });
 
   it.each(["telemetry", "lock"] as const)(
@@ -320,7 +492,7 @@ describe("catalog active/previous release store", () => {
 
   it("does not reflect private terms from malformed remote metadata", async () => {
     const current = bundle("Current title", "2026-07-14T00:00:00.000Z");
-    const privateTerm = "PRIVATE_REGISTRY_CANARY";
+    const privateTerm = "private-registry-canary";
     const malformed = {
       "x-openapi-release-id": "release-malformed",
       paths: {
@@ -398,6 +570,161 @@ describe("catalog active/previous release store", () => {
     await expect(manager.load()).resolves.toMatchObject({
       catalog: { endpoints: [expect.objectContaining({ title_en: "Bundled title" })] },
     });
+  });
+
+  it("ignores a legacy persisted bundle even when the private registry is configured", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const trusted = bundle("Bundled title", "2026-07-14T00:00:00.000Z");
+    const legacy = bundle("Legacy title", "2026-07-15T00:00:00.000Z");
+    legacy.catalog.endpoints[0].title = "PRIVATE_REGISTRY_CANARY legacy title";
+    legacy.catalog.endpoints[0].title_en = "PRIVATE_REGISTRY_CANARY legacy title";
+    await store.save(legacy);
+
+    await expect(new CatalogManager(store, trusted, managerConfig()).load()).resolves.toMatchObject(
+      {
+        catalog: { endpoints: [expect.objectContaining({ title_en: "Bundled title" })] },
+      }
+    );
+    await expect(store.loadActive()).resolves.toMatchObject({
+      catalog: {
+        endpoints: [expect.objectContaining({ title_en: "PRIVATE_REGISTRY_CANARY legacy title" })],
+      },
+    });
+    await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
+  });
+
+  it("ignores an unversioned active pointer created by a legacy deployment", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const trusted = bundle("Bundled title", "2026-07-14T00:00:00.000Z");
+    const legacyActive = bundle("Legacy active title", "2026-07-15T00:00:00.000Z");
+    await mkdir(join(dir, "catalog-releases"), { recursive: true });
+    await writeFile(
+      join(dir, "catalog-releases", `${legacyActive.meta.release_id}.json`),
+      `${JSON.stringify(legacyActive)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(dir, "catalog-pointers.json"),
+      `${JSON.stringify({ active: legacyActive.meta.release_id })}\n`,
+      "utf8"
+    );
+
+    expect((await store.loadActive())?.catalog.endpoints[0].title_en).toBe("Legacy active title");
+    await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
+    await expect(new CatalogManager(store, trusted, managerConfig()).load()).resolves.toBe(trusted);
+  });
+
+  it("fails closed when the runtime private registry revision changes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
+    await store.saveCandidate(active);
+    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
+
+    const changedTerms = ["different-private-registry"];
+    await expect(store.loadPromoted(catalogSafetyContext(changedTerms))).rejects.toThrow(
+      "Catalog security registry or safety policy revision mismatch"
+    );
+    await expect(
+      new CatalogManager(store, active, {
+        ...managerConfig(),
+        privateCatalogTerms: changedTerms,
+      }).load()
+    ).rejects.toThrow("Catalog security registry or safety policy revision mismatch");
+  });
+
+  it("migrates from an old registry attestation through the matching bundled release", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
+    tempDirs.push(dir);
+    const store = new FileCatalogStore(dir);
+    const oldTerms = PRIVATE_TERMS;
+    const newTerms = ["new-private-registry"];
+    const oldActive = bundleWithTerms("Old active title", "2026-07-14T00:00:00.000Z", oldTerms);
+    const newBundled = bundleWithTerms("New bundled title", "2026-07-15T00:00:00.000Z", newTerms);
+    await store.saveCandidate(oldActive);
+    await store.promoteCandidate(catalogReleaseAttestation(oldActive, oldTerms));
+    const openapi = {
+      "x-openapi-release-id": "release-new-registry",
+      paths: {
+        "/api/web/test/v1": {
+          get: {
+            summary: "New bundled title",
+            description: "Get public web test data.",
+            operationId: "getWebTestV1",
+            responses: {},
+          },
+        },
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(openapi))
+    );
+    const manager = new CatalogManager(store, newBundled, {
+      ...managerConfig(),
+      privateCatalogTerms: newTerms,
+    });
+
+    await expect(manager.load()).resolves.toBe(newBundled);
+    await expect(manager.refresh()).resolves.toMatchObject({ success: true, changed: true });
+    await expect(store.loadPromoted(catalogSafetyContext(newTerms))).resolves.toMatchObject({
+      catalog: { endpoints: [expect.objectContaining({ title_en: "New bundled title" })] },
+    });
+    await expect(store.loadPrevious(catalogSafetyContext(newTerms))).resolves.toBeNull();
+  });
+
+  it("loads only the promoted release without consulting legacy store methods", async () => {
+    const trusted = bundle("Bundled title", "2026-07-14T00:00:00.000Z");
+    const promoted = bundle("Promoted title", "2026-07-15T00:00:00.000Z");
+    const load = vi.fn(async () => {
+      throw new Error("legacy load must not run");
+    });
+    const loadActive = vi.fn(async () => {
+      throw new Error("legacy-compatible active load must not run");
+    });
+    const loadPromoted = vi.fn(async () => promoted);
+    const store: CatalogStore = {
+      load,
+      loadActive,
+      loadPromoted,
+      save: async () => undefined,
+    };
+
+    await expect(new CatalogManager(store, trusted, managerConfig()).load()).resolves.toMatchObject(
+      {
+        catalog: { endpoints: [expect.objectContaining({ title_en: "Promoted title" })] },
+      }
+    );
+    expect(loadPromoted).toHaveBeenCalledOnce();
+    expect(loadActive).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("does not recursively rescan an attested catalog during ordinary load", async () => {
+    const trusted = bundle("Bundled title", "2026-07-14T00:00:00.000Z");
+    const promoted = bundle("Promoted title", "2026-07-15T00:00:00.000Z");
+    let traversed = false;
+    promoted.catalog.endpoints[0] = new Proxy(promoted.catalog.endpoints[0], {
+      ownKeys() {
+        traversed = true;
+        throw new Error("ordinary load recursively traversed the catalog");
+      },
+    });
+    const store: CatalogStore = {
+      load: async () => null,
+      loadPromoted: async () => promoted,
+      save: async () => undefined,
+    };
+
+    await expect(new CatalogManager(store, trusted, managerConfig()).load(true)).resolves.toBe(
+      promoted
+    );
+    expect(traversed).toBe(false);
   });
 
   it("keeps the localized active release when the Chinese OpenAPI fetch fails", async () => {

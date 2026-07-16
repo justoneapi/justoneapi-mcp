@@ -49171,11 +49171,15 @@ export const bundledCatalog: CatalogBundle = {
     ],
   },
   meta: {
-    release_id: "catalog-20260715130650-dc8dc55323ab",
-    generator_version: "2",
-    generated_at: "2026-07-15T13:06:50.950Z",
+    release_id: "catalog-20260716052159-1385b68588bb",
+    generator_version: "3",
+    generated_at: "2026-07-16T05:21:59.368Z",
     endpoint_count: 259,
     localization_available: true,
+    security: {
+      registry_revision: "f7e6592ef3b21cc94aaf1c4d7929d7893decbb47c1615c3b02024ead52b58e1f",
+      safety_policy_version: "2026-07-16.1",
+    },
     source: {
       openapi_url: "https://docs.justoneapi.com/openapi.json",
       openapi_zh_url: "https://docs.justoneapi.com/openapi-zh.json",

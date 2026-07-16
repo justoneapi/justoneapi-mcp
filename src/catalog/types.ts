@@ -127,6 +127,17 @@ export type CatalogMeta = {
     openapi_zh_sha256?: string;
   };
   localization_available: boolean;
+  security?: CatalogSafetyContext;
+};
+
+export type CatalogSafetyContext = {
+  registry_revision: string;
+  safety_policy_version: string;
+};
+
+export type CatalogReleaseAttestation = CatalogSafetyContext & {
+  release_id: string;
+  content_sha256: string;
 };
 
 export type CatalogBundle = {
@@ -164,12 +175,14 @@ export type CatalogRollbackResult = {
 export type CatalogStore = {
   load(): Promise<CatalogBundle | null>;
   save(bundle: CatalogBundle): Promise<void>;
+  /** Load only an immutable release selected by the promoted active pointer. */
+  loadPromoted?(safety: CatalogSafetyContext): Promise<CatalogBundle | null>;
   loadActive?(): Promise<CatalogBundle | null>;
-  loadPrevious?(): Promise<CatalogBundle | null>;
+  loadPrevious?(safety: CatalogSafetyContext): Promise<CatalogBundle | null>;
   loadCandidate?(): Promise<CatalogBundle | null>;
   saveCandidate?(bundle: CatalogBundle): Promise<void>;
-  promoteCandidate?(releaseId: string): Promise<void>;
-  rollback?(): Promise<CatalogBundle | null>;
+  promoteCandidate?(attestation: CatalogReleaseAttestation): Promise<void>;
+  rollback?(safety: CatalogSafetyContext): Promise<CatalogBundle | null>;
   loadLastRefresh?(): Promise<unknown | null>;
   saveLastRefresh?(value: unknown): Promise<void>;
   tryAcquireRefreshLock?(ttlMs: number): Promise<boolean>;

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   CatalogBundle,
+  CatalogSafetyContext,
   EndpointCatalogEntry,
   EndpointContractStatus,
   EndpointHighlight,
@@ -29,6 +30,7 @@ import {
   isCredentialParameterName,
   isLegacyPublicPaginationOperation,
 } from "./security.js";
+import { catalogSafetyContext } from "./release.js";
 
 type OpenApiSchema = {
   type?: string;
@@ -115,7 +117,7 @@ export type BuildCatalogOptions = {
 };
 
 const VERSION_RE = /^v\d+$/i;
-export const CATALOG_GENERATOR_VERSION = "2";
+export const CATALOG_GENERATOR_VERSION = "3";
 
 export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -168,14 +170,18 @@ export function buildCatalogBundle(options: BuildCatalogOptions): CatalogBundle 
   assertUniqueEndpointIds(endpoints);
   assertUniqueRecommendedVersions(endpoints);
   const semanticHash = sha256(JSON.stringify(endpoints));
+  const security = options.forbiddenTerms?.length
+    ? catalogSafetyContext(options.forbiddenTerms)
+    : undefined;
   const bundle: CatalogBundle = {
     catalog: { endpoints },
     meta: {
-      release_id: catalogReleaseId(generatedAt, openapiHash, openapiZhHash, semanticHash),
+      release_id: catalogReleaseId(generatedAt, openapiHash, openapiZhHash, semanticHash, security),
       generator_version: CATALOG_GENERATOR_VERSION,
       generated_at: generatedAt,
       endpoint_count: endpoints.length,
       localization_available: Boolean(options.openapiZhText),
+      security,
       source: {
         openapi_url: options.openapiUrl,
         openapi_zh_url: options.openapiZhUrl,
@@ -236,11 +242,12 @@ function catalogReleaseId(
   generatedAt: string,
   openapiHash: string,
   openapiZhHash: string | undefined,
-  semanticHash: string
+  semanticHash: string,
+  security: CatalogSafetyContext | undefined
 ): string {
   const timestamp = generatedAt.replace(/[^0-9]/g, "").slice(0, 14);
   const contentHash = sha256(
-    `${CATALOG_GENERATOR_VERSION}:${openapiHash}:${openapiZhHash ?? ""}:${semanticHash}`
+    `${CATALOG_GENERATOR_VERSION}:${openapiHash}:${openapiZhHash ?? ""}:${semanticHash}:${JSON.stringify(security ?? null)}`
   );
   return `catalog-${timestamp}-${contentHash.slice(0, 12)}`;
 }

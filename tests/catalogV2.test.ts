@@ -818,6 +818,20 @@ describe("public catalog leak prevention", () => {
     ).not.toThrow();
   });
 
+  it("allows public Xiaohongshu short-link hosts while retaining URL guards", () => {
+    for (const value of ["http://xhslink.com/demo", "https://public.xhslink.com/demo"]) {
+      expect(() => assertSafePublicValue({ value })).not.toThrow();
+    }
+
+    for (const value of [
+      "https://xhslink.com:8443/demo",
+      "https://user:password@xhslink.com/demo",
+      "https://xhslink.com/demo?token=real-secret",
+    ]) {
+      expect(() => assertSafePublicValue({ value })).toThrow(/URL/);
+    }
+  });
+
   it.each([
     "internalRouteRef",
     "supplierRouteId",

@@ -57,12 +57,12 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
       return counts;
     }, {});
 
-    expect(highlights).toHaveLength(29);
+    expect(highlights).toHaveLength(35);
     expect(byKind).toEqual({
-      CAPABILITY: 7,
+      CAPABILITY: 11,
       CONDITION: 9,
       GUIDANCE: 7,
-      LIMITATION: 6,
+      LIMITATION: 8,
     });
     expect(
       normalizeHighlights(
@@ -132,6 +132,51 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
     ["抖音粉丝画像城市分布", "douyin_xingtu.gw_api_data_sp_get_author_fans_distribution_v1"],
   ])("resolves bilingual catalog query %s", (query, endpointId) => {
     expect(search(query).results[0]?.endpoint_id).toBe(endpointId);
+  });
+
+  it.each([
+    ["小红书短链解析", "xiaohongshu.share_url_transfer_v1", false],
+    ["RedNote share link expansion", "xiaohongshu.share_url_transfer_v1", false],
+    ["快手分享链接解析", "kuaishou.share_url_transfer_v1", false],
+    ["Kuaishou short link resolution", "kuaishou.share_url_transfer_v1", false],
+    ["抖音视频短链解析", "douyin.share_url_transfer_v1", true],
+    ["Douyin video short link resolution", "douyin.share_url_transfer_v1", true],
+    ["B站视频分享链接解析", "bilibili.share_url_transfer_v1", true],
+    ["Bilibili video short link resolution", "bilibili.share_url_transfer_v1", true],
+  ])(
+    "selects the reviewed short-link endpoint for %s",
+    (query, endpointId, hasVideoOnlyLimitation) => {
+      const output = search(query);
+      expect(output.ranking_version).toBe("v2");
+      expect(output.confidence).toBe("high");
+      expect(output.results[0]?.endpoint_id).toBe(endpointId);
+      expect(output.results[0]?.matched_capabilities).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "CAPABILITY", concept: "share_link_resolution" }),
+        ])
+      );
+      if (hasVideoOnlyLimitation) {
+        expect(output.results[0]?.relevant_limitations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "LIMITATION",
+              concept: "non_video_share_link_resolution",
+            }),
+          ])
+        );
+      }
+    }
+  );
+
+  it.each([
+    ["抖音图文分享链接解析", "douyin.share_url_transfer_v1"],
+    ["Douyin image-text post link resolution", "douyin.share_url_transfer_v1"],
+    ["B站动态短链解析", "bilibili.share_url_transfer_v1"],
+    ["Bilibili article link resolution", "bilibili.share_url_transfer_v1"],
+  ])("excludes a video-only short-link endpoint for unsupported intent %s", (query, endpointId) => {
+    const output = search(query);
+    expect(output.ranking_version).toBe("v2");
+    expect(output.results.map((result) => result.endpoint_id)).not.toContain(endpointId);
   });
 
   it("does not inject generic discovery tokens into every endpoint", () => {

@@ -182,6 +182,7 @@ const PUBLIC_HOST_SUFFIXES = [
   "amazon.com",
   "facebook.com",
   "douyin.com",
+  "xhslink.com",
   "xiaohongshu.com",
   "weixin.qq.com",
   "bilibili.com",

@@ -47,12 +47,6 @@ export type EndpointHighlight = {
  */
 export type EndpointHighlightInput = EndpointHighlight | string;
 
-export type EndpointContractStatus = {
-  status: "verified" | "partial" | "pending" | "stale";
-  reason?: string;
-  revision?: string;
-};
-
 export type EndpointUseCase = {
   id?: string;
   title?: string;
@@ -60,29 +54,6 @@ export type EndpointUseCase = {
   description?: string;
   description_en?: string;
   aliases?: string[];
-};
-
-export type EndpointKeyResponseField = {
-  path?: string;
-  name?: string;
-  name_en?: string;
-  description?: string;
-  description_en?: string;
-  aliases?: string[];
-  availability?: string;
-};
-
-/**
- * A customer-facing response field description explicitly published by the
- * reviewed OpenAPI contract. Runtime examples and docs-only inferred fields
- * are intentionally not part of this catalog type.
- */
-export type EndpointResponseFieldDescription = {
-  name: string;
-  path: string;
-  type: string;
-  description: string;
-  description_en: string;
 };
 
 export type EndpointCatalogEntry = {
@@ -113,13 +84,7 @@ export type EndpointCatalogEntry = {
   highlights_en: EndpointHighlightInput[];
   search_aliases?: string[];
   use_cases?: EndpointUseCase[];
-  key_response_fields?: EndpointKeyResponseField[];
-  response_field_descriptions?: EndpointResponseFieldDescription[];
   endpoint_family?: string;
-  contract_status?: EndpointContractStatus;
-  response_schema?: JsonValue;
-  response_schema_hash?: string;
-  response_example?: JsonValue;
   params: EndpointParam[];
   search_tokens: string[];
   pagination?: EndpointPagination;

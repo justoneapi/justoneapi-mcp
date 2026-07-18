@@ -30,9 +30,7 @@ function endpoint(id: string, overrides: Partial<EndpointCatalogEntry> = {}): En
     highlights_en: [],
     search_aliases: [],
     use_cases: [],
-    key_response_fields: [],
     endpoint_family: `${platform}.${methodName.replace(/_v\d+$/, "")}`,
-    contract_status: { status: "pending" },
     params: [],
     search_tokens: [],
     ...overrides,
@@ -66,13 +64,6 @@ const fixtures: EndpointCatalogEntry[] = [
     recommended: true,
     endpoint_family: "taobao.product_detail",
     highlights: [highlight("CAPABILITY", "post_coupon_price", ["coupon-adjusted price", "券后价"])],
-    key_response_fields: [
-      {
-        path: "$.data.priceAfterCoupon",
-        name: "Coupon-adjusted price",
-        aliases: ["券后价"],
-      },
-    ],
   }),
   endpoint("xiaohongshu.video_detail_v4", {
     platform_name: "小红书",
@@ -127,13 +118,6 @@ const fixtures: EndpointCatalogEntry[] = [
     title: "达人数据概览",
     title_en: "Creator data summary",
     search_aliases: ["蒲公英曝光中位数", "creator exposure median"],
-    key_response_fields: [
-      {
-        path: "$.data.exposureMedian",
-        name: "Exposure median",
-        aliases: ["曝光中位数"],
-      },
-    ],
   }),
   endpoint("douyin.fans_portrait_v1", {
     platform_name: "抖音",
@@ -142,13 +126,6 @@ const fixtures: EndpointCatalogEntry[] = [
     title: "粉丝画像",
     title_en: "Audience portrait",
     search_aliases: ["抖音粉丝画像城市分布", "audience city distribution"],
-    key_response_fields: [
-      {
-        path: "$.data.cityDistribution",
-        name: "City distribution",
-        aliases: ["粉丝画像城市分布"],
-      },
-    ],
   }),
 ];
 
@@ -181,10 +158,12 @@ describe("deterministic structured ranking", () => {
     });
   });
 
-  it("retrieves reviewed response fields bilingually with lower weight than key fields", () => {
-    const reviewedField = endpoint("web.reviewed_field_v1", {
-      title: "Reviewed payload",
-      title_en: "Reviewed payload",
+  it("ignores response field metadata from legacy cached catalogs", () => {
+    const legacy = endpoint("web.legacy_field_v1", {
+      title: "Generic payload",
+      title_en: "Generic payload",
+    });
+    Object.assign(legacy, {
       response_field_descriptions: [
         {
           name: "engagementMedian",
@@ -194,47 +173,16 @@ describe("deterministic structured ranking", () => {
           description_en: "Engagement median",
         },
       ],
-    });
-    const keyField = endpoint("web.key_field_v1", {
-      title: "Key payload",
-      title_en: "Key payload",
       key_response_fields: [
         {
           path: "$.data.engagementMedian",
           name: "Engagement median",
-          description: "互动量中位数",
-          description_en: "Engagement median",
+          aliases: ["互动量中位数"],
         },
       ],
     });
-
-    const english = search("engagement median", [reviewedField]);
-    expect(english.results[0]).toMatchObject({
-      endpoint_id: reviewedField.endpoint_id,
-      score: 95,
-      matched_response_field_descriptions: [
-        expect.objectContaining({ path: "$.data.metrics.engagementMedian" }),
-      ],
-      match_reasons: expect.arrayContaining(["response-field:$.data.metrics.engagementMedian"]),
-    });
-    expect(search("互动量中位数", [reviewedField]).results[0]?.endpoint_id).toBe(
-      reviewedField.endpoint_id
-    );
-
-    const weighted = search("engagement median", [reviewedField, keyField]);
-    expect(weighted.results.map((result) => [result.endpoint_id, result.score])).toEqual([
-      [keyField.endpoint_id, 99],
-      [reviewedField.endpoint_id, 95],
-    ]);
-  });
-
-  it("does not index absent or empty unreviewed response field metadata", () => {
-    const withoutReviewedFields = endpoint("web.unreviewed_field_v1", {
-      title: "Generic payload",
-      title_en: "Generic payload",
-      response_field_descriptions: [],
-    });
-    expect(search("unreviewedSecretMetric", [withoutReviewedFields]).results).toEqual([]);
+    expect(search("engagement median", [legacy]).results).toEqual([]);
+    expect(search("互动量中位数", [legacy]).results).toEqual([]);
   });
 
   it("does not turn a specific download limitation into a generic video exclusion", () => {
@@ -591,22 +539,6 @@ describe("deterministic structured ranking", () => {
       );
     }
   );
-
-  it("does not index fields that are only available in selected response variants", () => {
-    const variantOnly = endpoint("web.variant_payload_v1", {
-      title: "Payload",
-      title_en: "Payload",
-      key_response_fields: [
-        {
-          path: "$.data.experimentalMetric",
-          name: "Experimental metric",
-          aliases: ["variant-only metric"],
-          availability: "selected_variants",
-        },
-      ],
-    });
-    expect(search("variant-only metric", [variantOnly]).results).toEqual([]);
-  });
 
   it("uses only reviewed detection aliases for automatic platform detection", () => {
     const twitter = endpoint("twitter.search_v1", {

@@ -16,26 +16,6 @@ function build(openapi: Record<string, unknown>, forbiddenTerms: string[] = []) 
   });
 }
 
-function verifiedEnvelope(data: Record<string, unknown>) {
-  return {
-    oneOf: [
-      {
-        type: "object",
-        required: ["code", "data"],
-        properties: { code: { type: "integer", const: 0 }, data },
-      },
-      {
-        type: "object",
-        required: ["code"],
-        properties: {
-          code: { type: "integer", not: { const: 0 } },
-          message: { type: "string" },
-        },
-      },
-    ],
-  };
-}
-
 describe("structured catalog projection", () => {
   it("changes the release ID when only localized OpenAPI content changes", () => {
     const openapi = {
@@ -186,7 +166,7 @@ describe("structured catalog projection", () => {
     ).toThrow(/supported \$\.data JSONPath subset/);
   });
 
-  it("merges localized use cases and key fields into Chinese search and semantic diff", () => {
+  it("merges localized use cases into Chinese search and semantic diff", () => {
     const english = {
       "x-openapi-release-id": "localized-release",
       paths: {
@@ -197,14 +177,6 @@ describe("structured catalog projection", () => {
             description: "Get public product monitoring data.",
             "x-use-cases": [
               { id: "price-monitoring", title: "Price monitoring", aliases: ["price watch"] },
-            ],
-            "x-key-response-fields": [
-              {
-                path: "$.data.price",
-                name: "Current price",
-                description: "Current public product price.",
-                availability: "all",
-              },
             ],
             responses: {},
           },
@@ -220,14 +192,6 @@ describe("structured catalog projection", () => {
             summary: "商品监控",
             description: "获取公开商品监控数据。",
             "x-use-cases": [{ id: "price-monitoring", title, aliases: ["价格监控"] }],
-            "x-key-response-fields": [
-              {
-                path: "$.data.price",
-                name: "当前价格",
-                description: "当前公开商品价格。",
-                availability: "all",
-              },
-            ],
             responses: {},
           },
         },
@@ -253,16 +217,6 @@ describe("structured catalog projection", () => {
         aliases: ["price watch", "价格监控"],
       },
     ]);
-    expect(endpoint.key_response_fields).toEqual([
-      {
-        path: "$.data.price",
-        name: "当前价格",
-        name_en: "Current price",
-        description: "当前公开商品价格。",
-        description_en: "Current public product price.",
-        availability: "all",
-      },
-    ]);
     const search = searchEndpoints(
       [endpoint],
       { query: "价格监控", platform: "taobao" },
@@ -274,150 +228,30 @@ describe("structured catalog projection", () => {
     );
   });
 
-  it("strictly merges only reviewed localized response field descriptions", () => {
-    const field = (description: string, overrides: Record<string, unknown> = {}) => ({
-      name: "serviceScore",
-      path: "$.data.metrics[*].serviceScore",
-      type: "number | null",
-      description,
-      ...overrides,
-    });
-    const document = (
-      summary: string,
-      description: string,
-      responseFields: unknown = [field(description)]
-    ) => ({
-      "x-openapi-release-id": "reviewed-fields-release",
-      paths: {
-        "/api/taobao/shop-metrics/v1": {
-          get: {
-            operationId: "getTaobaoShopMetricsV1",
-            summary,
-            "x-response-field-descriptions": responseFields,
-            responses: {},
-          },
-        },
-      },
-    });
-    const english = document("Shop metrics", "Reviewed seller service score.");
-    const chinese = document("店铺指标", "已审核的卖家服务评分。");
-    const buildPair = (localized: Record<string, unknown>) =>
-      buildCatalogBundle({
-        openapi: english,
-        openapiZh: localized,
-        openapiText: JSON.stringify(english),
-        openapiZhText: JSON.stringify(localized),
-        openapiUrl: "https://docs.justoneapi.com/openapi.json",
-        openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
-        requireLocalizedReleaseId: true,
-      });
-
-    const endpoint = buildPair(chinese).catalog.endpoints[0];
-    expect(endpoint.response_field_descriptions).toEqual([
-      {
-        name: "serviceScore",
-        path: "$.data.metrics[*].serviceScore",
-        type: "number | null",
-        description: "已审核的卖家服务评分。",
-        description_en: "Reviewed seller service score.",
-      },
-    ]);
-    expect(catalogSemanticSignature(endpoint)).not.toBe(
-      catalogSemanticSignature({
-        ...endpoint,
-        response_field_descriptions: [
-          { ...endpoint.response_field_descriptions![0], description: "已审核的店铺服务评分。" },
-        ],
-      })
-    );
-
-    const mismatches = [
-      document("店铺指标", "已审核的卖家服务评分。", []),
-      document("店铺指标", "已审核的卖家服务评分。", [
-        field("已审核的卖家服务评分。", { path: "$.data.otherScore" }),
-      ]),
-      document("店铺指标", "已审核的卖家服务评分。", [
-        field("已审核的卖家服务评分。", { name: "otherScore" }),
-      ]),
-      document("店铺指标", "已审核的卖家服务评分。", [
-        field("已审核的卖家服务评分。", { type: "string" }),
-      ]),
-    ];
-    for (const mismatch of mismatches) {
-      expect(() => buildPair(mismatch)).toThrow(/response-field-description.*do not match/);
-    }
-  });
-
-  it("rejects empty, malformed, duplicate, or unreviewed response field entries", () => {
-    const operation = (fields: unknown) => ({
-      summary: "Test",
-      "x-response-field-descriptions": fields,
-      responses: {},
-    });
-    const document = (fields: unknown) => ({
-      paths: { "/api/web/test/v1": { get: operation(fields) } },
-    });
-
-    for (const fields of [
-      {},
-      ["$.data.value"],
-      [{ name: "value", path: "$.data.value", type: "string", description: "" }],
-      [
-        {
-          name: "value",
-          path: "$.data.value",
-          type: "string",
-          description: "No reliable business description is available yet.",
-        },
-      ],
-      [
-        {
-          name: "value",
-          path: "$.data.value",
-          type: "string",
-          description: "Reviewed value.",
-          reviewed: false,
-        },
-      ],
-      [
-        {
-          name: "value",
-          path: "$.other.value",
-          type: "string",
-          description: "Reviewed value.",
-        },
-      ],
-      [
-        { name: "value", path: "$.data.value", type: "string", description: "Value." },
-        { name: "value", path: "$.data.value", type: "string", description: "Value." },
-      ],
-    ]) {
-      expect(() => build(document(fields))).toThrow(
-        /x-response-field-descriptions|paths must be unique/
-      );
-    }
-  });
-
-  it("does not derive searchable reviewed fields from a response schema or example", () => {
+  it("ignores response field metadata, schemas, and examples", () => {
     const openapi = {
       paths: {
         "/api/web/test/v1": {
           get: {
             summary: "Generic payload",
-            "x-contract-status": { status: "verified" },
+            "x-key-response-fields": [{ path: "$.data.opaqueReviewMetric" }],
+            "x-response-field-descriptions": [
+              {
+                name: "opaqueReviewMetric",
+                path: "$.data.opaqueReviewMetric",
+                type: "number",
+                description: "Schema-only opaque review metric.",
+              },
+            ],
+            "x-contract-status": { status: "verified", revision: "private-revision" },
             responses: {
               200: {
                 content: {
                   "application/json": {
-                    schema: verifiedEnvelope({
+                    schema: {
                       type: "object",
-                      properties: {
-                        opaqueReviewMetric: {
-                          type: "number",
-                          description: "Schema-only opaque review metric.",
-                        },
-                      },
-                    }),
+                      properties: { opaqueReviewMetric: { type: "number" } },
+                    },
                     example: { code: 0, data: { opaqueReviewMetric: 42 } },
                   },
                 },
@@ -428,13 +262,17 @@ describe("structured catalog projection", () => {
       },
     };
     const endpoint = build(openapi).catalog.endpoints[0];
-    expect(endpoint.response_field_descriptions).toEqual([]);
+    expect(endpoint).not.toHaveProperty("key_response_fields");
+    expect(endpoint).not.toHaveProperty("response_field_descriptions");
+    expect(endpoint).not.toHaveProperty("contract_status");
+    expect(endpoint).not.toHaveProperty("response_schema");
+    expect(endpoint).not.toHaveProperty("response_example");
     expect(
       searchEndpoints([endpoint], { query: "opaque review metric" }, { mode: "v2" }).results
     ).toEqual([]);
   });
 
-  it("keeps structured discovery metadata and resolves a self-contained response schema", () => {
+  it("keeps structured discovery metadata and ignores response contracts", () => {
     const openapi = {
       tags: [
         {
@@ -459,15 +297,6 @@ describe("structured catalog projection", () => {
                 id: "price-monitoring",
                 title: "Price monitoring",
                 aliases: ["价格监控"],
-              },
-            ],
-            "x-key-response-fields": [
-              {
-                path: "$.data.priceAfterCoupon",
-                name: "Coupon price",
-                description: "Price after coupon application",
-                aliases: ["券后价"],
-                availability: "all",
               },
             ],
             "x-endpoint-family": "taobao.product_detail",
@@ -582,51 +411,13 @@ describe("structured catalog projection", () => {
         aliases: ["价格监控"],
       },
     ]);
-    expect(endpoint.key_response_fields?.[0]).toMatchObject({
-      path: "$.data.priceAfterCoupon",
-      name: "Coupon price",
-      availability: "all",
-    });
-    expect(endpoint.response_schema).toMatchObject({
-      oneOf: [
-        {
-          properties: {
-            code: { const: 0 },
-            data: {
-              type: "object",
-              properties: {
-                priceAfterCoupon: {
-                  title: "Coupon-adjusted price",
-                  unit: "currency",
-                  "x-unit": "CNY",
-                },
-                encodedPayload: {
-                  contentEncoding: "base64",
-                  contentMediaType: "application/json",
-                },
-                labels: {
-                  prefixItems: [{ const: "primary" }],
-                  contains: { const: "featured" },
-                  minContains: 1,
-                },
-                metadata: {
-                  if: { properties: { kind: { const: "text" } } },
-                  then: { required: ["value"] },
-                  unevaluatedProperties: false,
-                },
-              },
-            },
-          },
-        },
-        { properties: { code: { type: "integer" } } },
-      ],
-    });
-    expect(JSON.stringify(endpoint.response_schema)).not.toContain("$ref");
-    expect(endpoint.response_schema_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(endpoint.response_example).toMatchObject({ code: 0, data: { priceAfterCoupon: 1 } });
+    expect(endpoint.recommended).toBe(true);
+    expect(endpoint.endpoint_family).toBe("taobao.product_detail");
+    expect(endpoint).not.toHaveProperty("response_schema");
+    expect(endpoint).not.toHaveProperty("response_example");
   });
 
-  it("changes the response schema hash and semantic signature for unit-only changes", () => {
+  it("does not include response schema changes in catalog semantics", () => {
     const withUnit = (unit: string) =>
       build({
         paths: {
@@ -638,7 +429,7 @@ describe("structured catalog projection", () => {
                 200: {
                   content: {
                     "application/json": {
-                      schema: verifiedEnvelope({ type: "number", "x-unit": unit }),
+                      schema: { type: "number", "x-unit": unit },
                     },
                   },
                 },
@@ -650,14 +441,12 @@ describe("structured catalog projection", () => {
 
     const count = withUnit("count");
     const percent = withUnit("percent");
-    expect(count.response_schema).toMatchObject({
-      oneOf: [{ properties: { data: { "x-unit": "count" } } }, {}],
-    });
-    expect(count.response_schema_hash).not.toBe(percent.response_schema_hash);
-    expect(catalogSemanticSignature(count)).not.toBe(catalogSemanticSignature(percent));
+    expect(count).not.toHaveProperty("response_schema");
+    expect(count).not.toHaveProperty("response_schema_hash");
+    expect(catalogSemanticSignature(count)).toBe(catalogSemanticSignature(percent));
   });
 
-  it("generates an empty object for an intentionally untyped response data field", () => {
+  it("does not generate a synthetic response example", () => {
     const bundle = build({
       paths: {
         "/api/web/test/v1": {
@@ -680,11 +469,11 @@ describe("structured catalog projection", () => {
         },
       },
     });
-    expect(bundle.catalog.endpoints[0].response_example).toMatchObject({ code: 0, data: {} });
+    expect(bundle.catalog.endpoints[0]).not.toHaveProperty("response_example");
   });
 
   it.each(["pending", "partial", "stale"] as const)(
-    "removes unverified typed response claims for %s contracts",
+    "ignores %s response contract metadata",
     (status) => {
       const bundle = build({
         paths: {
@@ -715,12 +504,13 @@ describe("structured catalog projection", () => {
         },
       });
       const endpoint = bundle.catalog.endpoints[0];
-      expect(JSON.stringify(endpoint.response_schema)).not.toContain("unverifiedClaim");
-      expect(endpoint.response_example).toMatchObject({ code: 0, data: {} });
+      expect(endpoint).not.toHaveProperty("contract_status");
+      expect(endpoint).not.toHaveProperty("response_schema");
+      expect(endpoint).not.toHaveProperty("response_example");
     }
   );
 
-  it("rejects a verified contract without a complete success/error envelope", () => {
+  it("does not validate response envelopes", () => {
     const operation = (schema?: Record<string, unknown>) => ({
       summary: "Test",
       "x-contract-status": { status: "verified" },
@@ -730,7 +520,7 @@ describe("structured catalog projection", () => {
       paths: { "/api/web/test/v1": { get: operation(schema) } },
     });
 
-    expect(() => build(document())).toThrow(/Verified response contract/);
+    expect(() => build(document())).not.toThrow();
     expect(() =>
       build(
         document({
@@ -742,16 +532,11 @@ describe("structured catalog projection", () => {
           },
         })
       )
-    ).toThrow(/Verified response contract/);
-    expect(() => build(document(verifiedEnvelope({})))).toThrow(/invalid public envelope/);
+    ).not.toThrow();
   });
 
-  it("generates the verified success example when the error variant is listed first", () => {
-    const schema = verifiedEnvelope({
-      type: "object",
-      properties: { publicValue: { type: "string" } },
-    });
-    schema.oneOf.reverse();
+  it("does not expose a response example for verified response metadata", () => {
+    const schema = { type: "object", properties: { publicValue: { type: "string" } } };
     const bundle = build({
       paths: {
         "/api/web/test/v1": {
@@ -764,10 +549,7 @@ describe("structured catalog projection", () => {
       },
     });
 
-    expect(bundle.catalog.endpoints[0].response_example).toMatchObject({
-      code: 0,
-      data: { publicValue: "example" },
-    });
+    expect(bundle.catalog.endpoints[0]).not.toHaveProperty("response_example");
   });
 
   it("does not inject unrelated domain canonical terms into every endpoint", () => {
@@ -813,7 +595,7 @@ describe("structured catalog projection", () => {
     ).toThrow(/multiple recommended versions/i);
   });
 
-  it("includes discovery metadata, parameter prose, and response hash in semantic diff", () => {
+  it("includes discovery metadata and parameter prose in semantic diff", () => {
     const base = build({
       paths: {
         "/api/web/test/v1": {
@@ -856,9 +638,7 @@ describe("structured catalog projection", () => {
           },
         ],
       },
-      { ...base, key_response_fields: [{ path: "$.data.id", name: "ID" }] },
       { ...base, recommended: true },
-      { ...base, response_schema_hash: "changed-response-schema-hash" },
     ];
     const signatures = new Set([
       catalogSemanticSignature(base),
@@ -870,36 +650,23 @@ describe("structured catalog projection", () => {
 
 describe("public catalog leak prevention", () => {
   it.each([
-    [
-      "external",
-      "https://private-provider.invalid/secret-schema.json",
-      /External response schema refs/,
-    ],
-    [
-      "unresolvable",
-      "#/components/schemas/PrivateProviderRoute",
-      /Unresolvable response schema ref/,
-    ],
-  ])("rejects an %s response ref without echoing its target", (_name, ref, expected) => {
-    let message = "";
-    try {
-      build({
-        paths: {
-          "/api/web/test/v1": {
-            get: {
-              summary: "Test",
-              responses: {
-                200: { content: { "application/json": { schema: { $ref: ref } } } },
-              },
+    ["external", "https://private-provider.invalid/secret-schema.json"],
+    ["unresolvable", "#/components/schemas/PrivateProviderRoute"],
+  ])("ignores an %s response ref", (_name, ref) => {
+    const bundle = build({
+      paths: {
+        "/api/web/test/v1": {
+          get: {
+            summary: "Test",
+            responses: {
+              200: { content: { "application/json": { schema: { $ref: ref } } } },
             },
           },
         },
-      });
-    } catch (error) {
-      message = error instanceof Error ? error.message : String(error);
-    }
-    expect(message).toMatch(expected);
-    expect(message).not.toContain(ref);
+      },
+    });
+    expect(bundle.catalog.endpoints[0]).not.toHaveProperty("response_schema");
+    expect(JSON.stringify(bundle.catalog)).not.toContain(ref);
   });
 
   it("scans catalog source metadata as part of the public bundle", () => {
@@ -917,15 +684,9 @@ describe("public catalog leak prevention", () => {
   it.each([
     ["internal wording", { description: "Uses the upstream response for pagination." }],
     ["supplier identity", { description: "Internal supplier Acme handles this request." }],
-    ["internal field", { responseProperty: "actualSupplier" }],
-    ["route reference", { responseProperty: "routeRef" }],
-    ["function id", { responseProperty: "functionId" }],
     ["internal URL", { description: "See https://router.internal/contract." }],
-    ["credential", { responseProperty: "accessToken" }],
-    ["token", { responseProperty: "token" }],
   ])("fails closed for %s", (_name, mutation) => {
-    const responseProperty = "responseProperty" in mutation ? mutation.responseProperty : "value";
-    const description = "description" in mutation ? mutation.description : "Get public test data.";
+    const description = mutation.description;
     const openapi = {
       paths: {
         "/api/web/test/v1": {
@@ -938,7 +699,7 @@ describe("public catalog leak prevention", () => {
                   "application/json": {
                     schema: {
                       type: "object",
-                      properties: { [responseProperty]: { type: "string" } },
+                      properties: { value: { type: "string" } },
                     },
                   },
                 },
@@ -950,6 +711,37 @@ describe("public catalog leak prevention", () => {
     };
     expect(() => build(openapi)).toThrow(/Unsafe|Non-public URL/);
   });
+
+  it.each(["actualSupplier", "routeRef", "functionId", "accessToken", "token"])(
+    "does not publish response property %s",
+    (responseProperty) => {
+      const bundle = build({
+        paths: {
+          "/api/web/test/v1": {
+            get: {
+              summary: "Test",
+              description: "Get public test data.",
+              responses: {
+                200: {
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        properties: { [responseProperty]: { type: "string" } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      const endpoint = bundle.catalog.endpoints[0];
+      expect(endpoint).not.toHaveProperty("response_schema");
+      expect(endpoint.search_tokens).not.toContain(responseProperty);
+    }
+  );
 
   it("allows customer-facing 1688 supplier research wording", () => {
     expect(() =>

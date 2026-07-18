@@ -59,7 +59,6 @@ Output includes:
       "required_params": ["note_id"],
       "matched": ["platform:xiaohongshu", "capability:note comments"],
       "matched_capabilities": [],
-      "matched_key_response_fields": [],
       "relevant_limitations": [],
       "match_reasons": ["platform:xiaohongshu", "capability:note comments"],
       "alternatives": []
@@ -71,7 +70,7 @@ Output includes:
 
 ## get_endpoint_schema
 
-Return the full schema for an endpoint.
+Return the request metadata needed to call an endpoint.
 
 Input:
 
@@ -94,11 +93,6 @@ Output includes:
   "path": "/api/kuaishou/search-video/v2",
   "search_aliases": [],
   "use_cases": [],
-  "key_response_fields": [],
-  "contract_status": {
-    "status": "pending",
-    "reason": "Insufficient verified response evidence"
-  },
   "highlights": [],
   "params": [
     {
@@ -116,10 +110,7 @@ Output includes:
     "params": {
       "keyword": "<string>"
     }
-  },
-  "response_schema": {},
-  "response_example": {},
-  "response_example_synthetic": true
+  }
 }
 ```
 
@@ -137,7 +128,7 @@ publish rather than placing the private registry in source control.
 
 Runtime endpoint and account calls do not depend on this registry and return upstream payloads
 through the normal truncation behavior. When the registry is unavailable, endpoint search and
-schema inspection stay available from the release-scanned bundled catalog, while dynamic refresh,
+endpoint metadata inspection stay available from the release-scanned bundled catalog, while dynamic refresh,
 promotion, and rollback remain disabled. A trusted operator must inject the confidential registry
 before those catalog maintenance operations are enabled. The registry must never be placed in
 client configuration that will be shared publicly.

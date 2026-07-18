@@ -17,7 +17,6 @@ import {
   catalogSafetyContext,
   CatalogSafetyContextMismatchError,
 } from "./release.js";
-import { schemaHash } from "./schema.js";
 import { assertSafeCatalogValue } from "./security.js";
 
 export class CatalogManager {
@@ -175,10 +174,7 @@ export class CatalogManager {
         internalMessage.startsWith("Non-public URL") ||
         internalMessage.startsWith("Credential-bearing URL")
           ? "CATALOG_UNSAFE"
-          : internalMessage.includes("JSON") ||
-              internalMessage.includes("x-highlights") ||
-              internalMessage.includes("x-response-field-descriptions") ||
-              internalMessage.includes("x-contract-status")
+          : internalMessage.includes("JSON") || internalMessage.includes("x-highlights")
             ? "OPENAPI_PARSE_FAILED"
             : "OPENAPI_FETCH_FAILED";
       const message =
@@ -395,14 +391,10 @@ export function catalogSemanticSignature(endpoint: EndpointCatalogEntry): string
     platform_description_en: endpoint.platform_description_en,
     search_aliases: endpoint.search_aliases ?? [],
     use_cases: endpoint.use_cases ?? [],
-    key_response_fields: endpoint.key_response_fields ?? [],
-    response_field_descriptions: endpoint.response_field_descriptions ?? [],
     highlights: normalizeHighlights(endpoint.highlights),
     highlights_en: normalizeHighlights(endpoint.highlights_en),
     endpoint_family: endpoint.endpoint_family,
     recommended: endpoint.recommended,
-    contract_status: endpoint.contract_status,
-    response_schema_hash: endpoint.response_schema_hash ?? schemaHash(endpoint.response_schema),
     params: endpoint.params.map((param) => ({
       name: param.name,
       api_name: param.api_name,

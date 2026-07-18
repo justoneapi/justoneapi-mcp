@@ -2,11 +2,6 @@ import { z } from "zod";
 import { RuntimeContext } from "../common/runtime.js";
 import { McpToolError, defaultMessage } from "../common/errors.js";
 import { normalizeHighlights } from "../catalog/highlights.js";
-import {
-  assertVerifiedResponseContract,
-  generateSyntheticExample,
-  unverifiedResponseSchema,
-} from "../catalog/schema.js";
 
 export const GetEndpointSchemaInput = z.object({
   endpoint_id: z.string().min(1).describe("Endpoint id returned by search_endpoints."),
@@ -27,28 +22,6 @@ export async function getEndpointSchema(
     });
   }
 
-  const contractStatus = endpoint.contract_status ?? {
-    status: "pending" as const,
-    reason: "Insufficient verified response evidence",
-  };
-  let responseSchema = endpoint.response_schema;
-  if (contractStatus.status === "verified") {
-    try {
-      assertVerifiedResponseContract(responseSchema);
-    } catch {
-      throw new McpToolError({
-        code: "CATALOG_NOT_READY",
-        message: defaultMessage("CATALOG_NOT_READY"),
-      });
-    }
-  } else {
-    // Older cached catalogs may predate contract-status enforcement. Never
-    // expose their typed response claims until the contract is verified.
-    responseSchema = unverifiedResponseSchema();
-  }
-  // Recompute from the effective projected schema instead of trusting a cached
-  // example produced by an older catalog generator.
-  const responseExample = generateSyntheticExample(responseSchema);
   const result = {
     success: true,
     endpoint_id: endpoint.endpoint_id,
@@ -68,9 +41,6 @@ export async function getEndpointSchema(
     endpoint_family: endpoint.endpoint_family,
     search_aliases: endpoint.search_aliases ?? [],
     use_cases: endpoint.use_cases ?? [],
-    key_response_fields: endpoint.key_response_fields ?? [],
-    response_field_descriptions: endpoint.response_field_descriptions ?? [],
-    contract_status: contractStatus,
     highlights: normalizeHighlights(endpoint.highlights),
     highlights_en: normalizeHighlights(endpoint.highlights_en),
     params: endpoint.params.map((param) => ({
@@ -94,9 +64,6 @@ export async function getEndpointSchema(
       ),
     },
     pagination: endpoint.pagination,
-    response_schema: responseSchema,
-    response_example: responseExample,
-    response_example_synthetic: responseExample !== undefined,
   };
   return result;
 }

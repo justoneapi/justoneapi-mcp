@@ -1,9 +1,4 @@
-import {
-  EndpointCatalogEntry,
-  EndpointHighlight,
-  EndpointKeyResponseField,
-  EndpointResponseFieldDescription,
-} from "../catalog/types.js";
+import { EndpointCatalogEntry, EndpointHighlight } from "../catalog/types.js";
 import { normalizeHighlights } from "../catalog/highlights.js";
 import { splitWords, toSnakeCase, unique } from "../catalog/stringUtils.js";
 import { endpointSearchText, normalizeQuery, NormalizedQuery } from "./normalize.js";
@@ -38,8 +33,6 @@ export type SearchEndpointResult = {
   required_params: string[];
   matched: string[];
   matched_capabilities?: EndpointHighlight[];
-  matched_key_response_fields?: EndpointKeyResponseField[];
-  matched_response_field_descriptions?: EndpointResponseFieldDescription[];
   relevant_limitations?: EndpointHighlight[];
   conditions?: EndpointHighlight[];
   match_reasons?: string[];
@@ -148,12 +141,6 @@ function scoreEndpointV2(
   const capabilities = highlights
     .filter((highlight) => highlight.kind === "CAPABILITY")
     .filter((highlight) => highlightMatchesTerms(highlight, query));
-  const keyFields = (endpoint.key_response_fields ?? [])
-    .filter(isGenerallyAvailable)
-    .filter((field) => valueListMatches(keyFieldValues(field), query));
-  const responseFields = (endpoint.response_field_descriptions ?? []).filter((field) =>
-    valueListMatches(responseFieldValues(field), query)
-  );
   const reasons = unique([
     ...(query.platform === endpoint.platform ? [`platform:${endpoint.platform}`] : []),
     ...(exactMatch ? ["exact endpoint identifier"] : []),
@@ -164,8 +151,6 @@ function scoreEndpointV2(
 
   return baseResult(endpoint, score, reasons, {
     matched_capabilities: capabilities,
-    matched_key_response_fields: keyFields,
-    matched_response_field_descriptions: responseFields,
     // Conflicting limitations exclude the endpoint above. The remaining
     // limitations are still returned so callers see important boundaries
     // before selecting or invoking an otherwise compatible endpoint.
@@ -199,18 +184,6 @@ function weightedSources(
         useCase.description_en ?? "",
         ...(useCase.aliases ?? []),
       ]),
-    },
-    {
-      label: "key-field",
-      weight: 0.95,
-      values: (endpoint.key_response_fields ?? [])
-        .filter(isGenerallyAvailable)
-        .flatMap(keyFieldValues),
-    },
-    {
-      label: "response-field",
-      weight: 0.75,
-      values: (endpoint.response_field_descriptions ?? []).flatMap(responseFieldValues),
     },
     {
       label: "capability",
@@ -330,34 +303,18 @@ function endpointHasStructuredIntent(
   endpoint: EndpointCatalogEntry,
   query: NormalizedQuery
 ): boolean {
-  return (
-    uniqueHighlights(endpoint)
-      .filter((highlight) => ["CAPABILITY", "LIMITATION"].includes(highlight.kind))
-      .some((highlight) => highlightMatchesIntent(highlight, query)) ||
-    (endpoint.key_response_fields ?? [])
-      .filter(isGenerallyAvailable)
-      .some((field) => valueListMatches(keyFieldValues(field), query)) ||
-    (endpoint.response_field_descriptions ?? []).some((field) =>
-      valueListMatches(responseFieldValues(field), query)
-    )
-  );
+  return uniqueHighlights(endpoint)
+    .filter((highlight) => ["CAPABILITY", "LIMITATION"].includes(highlight.kind))
+    .some((highlight) => highlightMatchesIntent(highlight, query));
 }
 
 function endpointHasPositiveIntentEvidence(
   endpoint: EndpointCatalogEntry,
   query: NormalizedQuery
 ): boolean {
-  return (
-    uniqueHighlights(endpoint)
-      .filter((highlight) => highlight.kind === "CAPABILITY")
-      .some((highlight) => highlightMatchesIntent(highlight, query)) ||
-    (endpoint.key_response_fields ?? [])
-      .filter(isGenerallyAvailable)
-      .some((field) => valueListMatches(keyFieldValues(field), query)) ||
-    (endpoint.response_field_descriptions ?? []).some((field) =>
-      valueListMatches(responseFieldValues(field), query)
-    )
-  );
+  return uniqueHighlights(endpoint)
+    .filter((highlight) => highlight.kind === "CAPABILITY")
+    .some((highlight) => highlightMatchesIntent(highlight, query));
 }
 
 function searchLegacy(
@@ -623,26 +580,6 @@ function valueListMatches(values: string[], query: NormalizedQuery): boolean {
   );
 }
 
-function keyFieldValues(field: EndpointKeyResponseField): string[] {
-  return [
-    field.path ?? "",
-    field.name ?? "",
-    field.name_en ?? "",
-    field.description ?? "",
-    field.description_en ?? "",
-    ...(field.aliases ?? []),
-  ];
-}
-
-function responseFieldValues(field: EndpointResponseFieldDescription): string[] {
-  return [field.path, field.name, field.description, field.description_en];
-}
-
-function isGenerallyAvailable(field: EndpointKeyResponseField): boolean {
-  if (!field.availability) return true;
-  return ["all", "stable", "universal", "all_variants"].includes(field.availability.toLowerCase());
-}
-
 function textMatches(term: string, candidate: string): boolean {
   const normalizedTerm = comparable(term);
   const normalizedCandidate = comparable(candidate);
@@ -728,13 +665,10 @@ function foldFamilies(
         const explicit = values.find((result) => result.version === query.explicit_version);
         if (explicit) return explicit;
       }
-      const evidenceBacked = values.filter(
-        (result) =>
-          (result.matched_capabilities?.length ?? 0) > 0 ||
-          (result.matched_key_response_fields?.length ?? 0) > 0 ||
-          (result.matched_response_field_descriptions?.length ?? 0) > 0
+      const capabilityBacked = values.filter(
+        (result) => (result.matched_capabilities?.length ?? 0) > 0
       );
-      const eligible = evidenceBacked.length ? evidenceBacked : values;
+      const eligible = capabilityBacked.length ? capabilityBacked : values;
       const recommended = eligible.find(
         (result) =>
           endpoints.find((endpoint) => endpoint.endpoint_id === result.endpoint_id)?.recommended

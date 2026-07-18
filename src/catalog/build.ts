@@ -3,12 +3,9 @@ import {
   CatalogBundle,
   CatalogSafetyContext,
   EndpointCatalogEntry,
-  EndpointContractStatus,
   EndpointHighlight,
-  EndpointKeyResponseField,
   EndpointPagination,
   EndpointParam,
-  EndpointResponseFieldDescription,
   EndpointUseCase,
   JsonValue,
 } from "./types.js";
@@ -17,16 +14,8 @@ import { platformAliases, platformDisplayName } from "../search/dictionaries/pla
 import { DOMAIN_TERMS, STOPWORDS } from "../search/dictionaries/domainTerms.js";
 import { normalizeHighlights } from "./highlights.js";
 import {
-  assertVerifiedResponseContract,
-  generateSyntheticExample,
-  projectResponseSchema,
-  schemaHash,
-  unverifiedResponseSchema,
-} from "./schema.js";
-import {
   assertNoCredentialParameterValues,
   assertSafeCatalogValue,
-  assertSafePublicValue,
   isAllowedLegacyPaginationParameter,
   isCredentialParameterName,
   isLegacyPublicPaginationOperation,
@@ -68,7 +57,6 @@ type OpenApiOperation = {
   requestBody?: {
     content?: Record<string, { schema?: OpenApiSchema }>;
   };
-  responses?: Record<string, { content?: Record<string, { schema?: unknown }> }>;
   deprecated?: boolean;
   "x-order"?: string | number;
   "x-api-version"?: string;
@@ -77,15 +65,11 @@ type OpenApiOperation = {
   "x-highlights"?: unknown[];
   "x-search-aliases"?: unknown;
   "x-use-cases"?: unknown;
-  "x-key-response-fields"?: unknown;
-  "x-response-field-descriptions"?: unknown;
   "x-endpoint-family"?: string;
-  "x-contract-status"?: unknown;
 };
 
 type OpenApiDocument = {
   paths?: Record<string, Record<string, OpenApiOperation>>;
-  components?: Record<string, unknown>;
   tags?: Array<{
     name?: string;
     description?: string;
@@ -119,7 +103,7 @@ export type BuildCatalogOptions = {
 };
 
 const VERSION_RE = /^v\d+$/i;
-export const CATALOG_GENERATOR_VERSION = "4";
+export const CATALOG_GENERATOR_VERSION = "5";
 
 export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -157,7 +141,6 @@ export function buildCatalogBundle(options: BuildCatalogOptions): CatalogBundle 
           parsed,
           operation,
           zhOperation,
-          options.openapi,
           platformMetadata.get(parsed.platform) ??
             operation.tags
               ?.map((tag) => platformMetadata.get(`tag:${tag.toLowerCase()}`))
@@ -296,17 +279,10 @@ function buildEndpoint(
   parsed: { platform: string; methodName: string; version: string },
   operation: OpenApiOperation,
   zhOperation: OpenApiOperation | undefined,
-  openapi: OpenApiDocument,
   platformMetadata?: PlatformMetadata,
   forbiddenTerms: string[] = []
 ): EndpointCatalogEntry {
   const params = buildParams(path, method, operation, zhOperation);
-  const contractStatus = normalizeContractStatus(operation["x-contract-status"]);
-  const projectedResponseSchema = projectResponseSchema(responseSchemaFor(operation), openapi);
-  if (projectedResponseSchema !== undefined) {
-    assertSafePublicValue(projectedResponseSchema, "projected response schema", forbiddenTerms);
-  }
-  const responseSchema = responseSchemaForContractStatus(contractStatus, projectedResponseSchema);
   const highlightsEn = normalizeHighlights(operation["x-highlights"]);
   const highlights = normalizeHighlights(
     zhOperation?.["x-highlights"] ?? operation["x-highlights"]
@@ -347,21 +323,8 @@ function buildEndpoint(
       ...normalizeStringArray(zhOperation?.["x-search-aliases"]),
     ]),
     use_cases: mergeLocalizedUseCases(operation["x-use-cases"], zhOperation?.["x-use-cases"]),
-    key_response_fields: mergeLocalizedKeyResponseFields(
-      operation["x-key-response-fields"],
-      zhOperation?.["x-key-response-fields"]
-    ),
-    response_field_descriptions: mergeLocalizedResponseFieldDescriptions(
-      operation["x-response-field-descriptions"],
-      zhOperation?.["x-response-field-descriptions"],
-      Boolean(zhOperation)
-    ),
     endpoint_family:
       cleanOptionalString(operation["x-endpoint-family"]) ?? inferEndpointFamily(parsed),
-    contract_status: contractStatus,
-    response_schema: responseSchema,
-    response_schema_hash: schemaHash(responseSchema),
-    response_example: generateSyntheticExample(responseSchema),
     params,
     search_tokens: [],
   };
@@ -372,15 +335,6 @@ function buildEndpoint(
   // exception returned from catalog generation.
   assertSafeCatalogValue(endpoint, "public endpoint", forbiddenTerms);
   return endpoint;
-}
-
-function responseSchemaForContractStatus(
-  contractStatus: EndpointContractStatus,
-  projectedSchema: JsonValue | undefined
-): JsonValue {
-  if (contractStatus.status !== "verified") return unverifiedResponseSchema();
-  assertVerifiedResponseContract(projectedSchema);
-  return projectedSchema!;
 }
 
 function assertLocalizedHighlightAlignment(
@@ -570,16 +524,6 @@ function requestContentType(operation: OpenApiOperation): string | undefined {
   return Object.keys(content)[0];
 }
 
-function responseSchemaFor(operation: OpenApiOperation): unknown {
-  const response = operation.responses?.["200"] ?? operation.responses?.["2XX"];
-  if (!response?.content) return undefined;
-  return (
-    response.content["application/json"]?.schema ??
-    response.content["application/*+json"]?.schema ??
-    Object.values(response.content).find((item) => item.schema)?.schema
-  );
-}
-
 function buildPlatformMetadata(
   openapi: OpenApiDocument,
   openapiZh?: OpenApiDocument
@@ -668,192 +612,12 @@ function mergeLocalizedUseCases(englishValue: unknown, chineseValue: unknown): E
   return merged;
 }
 
-function normalizeKeyResponseFields(value: unknown): EndpointKeyResponseField[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (typeof item === "string" && item.trim()) {
-      const text = item.trim();
-      return [text.startsWith("$") ? { path: text } : { name: text }];
-    }
-    if (!isObject(item)) return [];
-    const normalized: EndpointKeyResponseField = {
-      path: cleanOptionalString(item.path),
-      name: cleanOptionalString(item.name),
-      description: cleanOptionalString(item.description),
-      aliases: normalizeStringArray(item.aliases),
-      availability: cleanOptionalString(item.availability),
-    };
-    if (!normalized.path && !normalized.name) return [];
-    if (!normalized.aliases?.length) delete normalized.aliases;
-    return [normalized];
-  });
-}
-
-function mergeLocalizedKeyResponseFields(
-  englishValue: unknown,
-  chineseValue: unknown
-): EndpointKeyResponseField[] {
-  const english = normalizeKeyResponseFields(englishValue);
-  if (chineseValue === undefined) return english;
-  const chinese = normalizeKeyResponseFields(chineseValue);
-  if (english.length !== chinese.length) {
-    throw new Error("English and Chinese OpenAPI key-response-field structures do not match");
-  }
-  const localizedByPath = new Map(
-    chinese.filter((field) => field.path).map((field) => [field.path!, field] as const)
-  );
-  const consumed = new Set<EndpointKeyResponseField>();
-  const merged = english.map((field, index) => {
-    const localized = field.path ? localizedByPath.get(field.path) : chinese[index];
-    if (!localized || (field.path && localized.path !== field.path) || consumed.has(localized)) {
-      throw new Error("English and Chinese OpenAPI key-response-field paths do not match");
-    }
-    consumed.add(localized);
-    return compactObject<EndpointKeyResponseField>({
-      path: field.path,
-      name: localized.name ?? field.name,
-      name_en: field.name,
-      description: localized.description ?? field.description,
-      description_en: field.description,
-      aliases: unique([...(field.aliases ?? []), ...(localized.aliases ?? [])]),
-      availability: field.availability,
-    });
-  });
-  if (consumed.size !== chinese.length) {
-    throw new Error("English and Chinese OpenAPI key-response-field structures do not match");
-  }
-  return merged;
-}
-
-const RESPONSE_FIELD_PATH_RE = /^\$\.data(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\*\])*$/;
-const RESPONSE_FIELD_KEYS = new Set(["name", "path", "type", "description"]);
-const UNREVIEWED_RESPONSE_FIELD_DESCRIPTIONS = new Set([
-  "暂无可靠业务说明",
-  "no reliable business description is available yet.",
-]);
-
-function normalizeResponseFieldDescriptions(
-  value: unknown,
-  locale: "English" | "Chinese"
-): EndpointResponseFieldDescription[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) {
-    throw new Error(`${locale} x-response-field-descriptions must be an array`);
-  }
-
-  const paths = new Set<string>();
-  return value.map((item, index) => {
-    if (!isObject(item)) {
-      throw new Error(`${locale} x-response-field-descriptions[${index}] must be an object`);
-    }
-    const unknownKeys = Object.keys(item).filter((key) => !RESPONSE_FIELD_KEYS.has(key));
-    if (unknownKeys.length) {
-      throw new Error(`${locale} x-response-field-descriptions[${index}] has unknown fields`);
-    }
-    const name = cleanOptionalString(item.name);
-    const path = cleanOptionalString(item.path);
-    const type = cleanOptionalString(item.type);
-    const description = cleanOptionalString(item.description);
-    if (!name || !path || !type || !description) {
-      throw new Error(
-        `${locale} x-response-field-descriptions[${index}] must define non-empty name, path, type, and description`
-      );
-    }
-    if (UNREVIEWED_RESPONSE_FIELD_DESCRIPTIONS.has(description.toLowerCase())) {
-      throw new Error(
-        `${locale} x-response-field-descriptions[${index}] must contain a reviewed business description`
-      );
-    }
-    if (!RESPONSE_FIELD_PATH_RE.test(path)) {
-      throw new Error(
-        `${locale} x-response-field-descriptions[${index}].path must use the supported $.data JSONPath subset`
-      );
-    }
-    if (paths.has(path)) {
-      throw new Error(`${locale} x-response-field-descriptions paths must be unique`);
-    }
-    paths.add(path);
-    return { name, path, type, description, description_en: description };
-  });
-}
-
-function mergeLocalizedResponseFieldDescriptions(
-  englishValue: unknown,
-  chineseValue: unknown,
-  localized: boolean
-): EndpointResponseFieldDescription[] {
-  const english = normalizeResponseFieldDescriptions(englishValue, "English");
-  if (!localized) return english;
-  if (englishValue === undefined || chineseValue === undefined) {
-    if (englishValue === undefined && chineseValue === undefined) return [];
-    throw new Error(
-      "English and Chinese OpenAPI response-field-description structures do not match"
-    );
-  }
-  const chinese = normalizeResponseFieldDescriptions(chineseValue, "Chinese");
-  if (english.length !== chinese.length) {
-    throw new Error(
-      "English and Chinese OpenAPI response-field-description structures do not match"
-    );
-  }
-  return english.map((field, index) => {
-    const localizedField = chinese[index];
-    if (
-      field.path !== localizedField.path ||
-      field.name !== localizedField.name ||
-      field.type !== localizedField.type
-    ) {
-      throw new Error(
-        "English and Chinese OpenAPI response-field-description machine fields do not match"
-      );
-    }
-    return {
-      name: field.name,
-      path: field.path,
-      type: field.type,
-      description: localizedField.description,
-      description_en: field.description,
-    };
-  });
-}
-
 function compactObject<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(
     Object.entries(value).filter(
       ([, item]) => item !== undefined && (!Array.isArray(item) || item.length > 0)
     )
   ) as T;
-}
-
-function normalizeContractStatus(value: unknown): EndpointContractStatus {
-  if (typeof value === "string") return contractStatusFromParts(value);
-  if (isObject(value)) {
-    return contractStatusFromParts(
-      cleanOptionalString(value.status) ?? "pending",
-      cleanOptionalString(value.reason),
-      cleanOptionalString(value.revision)
-    );
-  }
-  return {
-    status: "pending",
-    reason: "Insufficient verified response evidence",
-  };
-}
-
-function contractStatusFromParts(
-  rawStatus: string,
-  reason?: string,
-  revision?: string
-): EndpointContractStatus {
-  const status = rawStatus.toLowerCase();
-  if (!["verified", "partial", "pending", "stale"].includes(status)) {
-    throw new Error("Invalid x-contract-status");
-  }
-  return {
-    status: status as EndpointContractStatus["status"],
-    reason,
-    revision,
-  };
 }
 
 function inferEndpointFamily(parsed: { platform: string; methodName: string }): string {
@@ -927,16 +691,6 @@ function buildSearchTokens(endpoint: EndpointCatalogEntry): string[] {
       useCase.description_en ?? "",
       ...(useCase.aliases ?? []),
     ]),
-    ...(endpoint.key_response_fields ?? [])
-      .filter(isGenerallyAvailableKeyField)
-      .flatMap((field) => [
-        field.path ?? "",
-        field.name ?? "",
-        field.name_en ?? "",
-        field.description ?? "",
-        field.description_en ?? "",
-        ...(field.aliases ?? []),
-      ]),
     ...capabilityHighlights.flatMap((highlight) => [
       highlight.concept ?? "",
       highlight.title ?? "",
@@ -979,16 +733,6 @@ function endpointText(endpoint: EndpointCatalogEntry): string {
       useCase.description_en ?? "",
       ...(useCase.aliases ?? []),
     ]),
-    ...(endpoint.key_response_fields ?? [])
-      .filter(isGenerallyAvailableKeyField)
-      .flatMap((field) => [
-        field.path ?? "",
-        field.name ?? "",
-        field.name_en ?? "",
-        field.description ?? "",
-        field.description_en ?? "",
-        ...(field.aliases ?? []),
-      ]),
     ...[...normalizeHighlights(endpoint.highlights), ...normalizeHighlights(endpoint.highlights_en)]
       .filter((highlight) => highlight.kind === "CAPABILITY")
       .flatMap((highlight) => [
@@ -1009,11 +753,6 @@ function splitSearchValue(value: string): string[] {
   return [...asciiWords, ...cjkChunks, normalized.trim()].filter(
     (token) => Boolean(token) && !STOPWORDS.has(token)
   );
-}
-
-function isGenerallyAvailableKeyField(field: EndpointKeyResponseField): boolean {
-  if (!field.availability) return true;
-  return ["all", "stable", "universal", "all_variants"].includes(field.availability.toLowerCase());
 }
 
 function inferPagination(params: EndpointParam[]): EndpointPagination | undefined {

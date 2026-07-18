@@ -43,7 +43,7 @@ function runtime(bundle: CatalogBundle, privateCatalogTerms: string[] = []): Run
 }
 
 describe("get_endpoint_schema public projection", () => {
-  it("returns structured highlights, response schema, and a synthetic response example", async () => {
+  it("returns request metadata and structured highlights without response contracts", async () => {
     const openapi = {
       paths: {
         "/api/douyin/fans-portrait/v1": {
@@ -151,33 +151,11 @@ describe("get_endpoint_schema public projection", () => {
       kind: "CAPABILITY",
       concept: "audience_city_distribution",
     });
-    expect(result.response_schema).toMatchObject({
-      oneOf: [
-        { properties: { data: { properties: { cityDistribution: { type: "array" } } } } },
-        {},
-      ],
-    });
-    expect(result.response_example).toEqual({
-      code: 0,
-      data: { cityDistribution: [{ city: "example", ratio: 1 }] },
-    });
-    expect(result.response_example_synthetic).toBe(true);
-    expect(result.response_field_descriptions).toEqual([
-      {
-        name: "city",
-        path: "$.data.cityDistribution[*].city",
-        type: "string",
-        description: "Reviewed city name in the audience distribution.",
-        description_en: "Reviewed city name in the audience distribution.",
-      },
-      {
-        name: "ratio",
-        path: "$.data.cityDistribution[*].ratio",
-        type: "number",
-        description: "Reviewed audience ratio for the city.",
-        description_en: "Reviewed audience ratio for the city.",
-      },
-    ]);
+    expect(result).not.toHaveProperty("key_response_fields");
+    expect(result).not.toHaveProperty("response_field_descriptions");
+    expect(result).not.toHaveProperty("contract_status");
+    expect(result).not.toHaveProperty("response_schema");
+    expect(result).not.toHaveProperty("response_example");
     expect(JSON.stringify(result)).not.toMatch(
       /actualSupplier|routeRef|functionId|normalizerKey|evidence|fixture/i
     );

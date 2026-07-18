@@ -49795,9 +49795,9 @@ export const bundledCatalog: CatalogBundle = {
     ],
   },
   meta: {
-    release_id: "catalog-20260718080717-d694e5a6cdce",
+    release_id: "catalog-20260718082305-b7cf3402ed6e",
     generator_version: "5",
-    generated_at: "2026-07-18T08:07:17.729Z",
+    generated_at: "2026-07-18T08:23:05.186Z",
     endpoint_count: 261,
     localization_available: true,
     security: {
@@ -49807,8 +49807,8 @@ export const bundledCatalog: CatalogBundle = {
     source: {
       openapi_url: "https://docs.justoneapi.com/openapi.json",
       openapi_zh_url: "https://docs.justoneapi.com/openapi-zh.json",
-      openapi_sha256: "6b980ebabc981c117c198dea4e890897046bbb507049e732192f6ca49ddae15a",
-      openapi_zh_sha256: "624b6fe11cbaa5b80e57c6a44a4a486320c5f25d9747cf21bb605db48ccfe2c4",
+      openapi_sha256: "3ee990726eee9529016d82a0ca8c7c1931b307327c77d404bf735e7bf694922a",
+      openapi_zh_sha256: "123b93beb48f48f4ab8127b1e6802591894076f3929ed87fd2d307997c015880",
     },
   },
 };

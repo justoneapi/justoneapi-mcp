@@ -181,6 +181,62 @@ describe("deterministic structured ranking", () => {
     });
   });
 
+  it("retrieves reviewed response fields bilingually with lower weight than key fields", () => {
+    const reviewedField = endpoint("web.reviewed_field_v1", {
+      title: "Reviewed payload",
+      title_en: "Reviewed payload",
+      response_field_descriptions: [
+        {
+          name: "engagementMedian",
+          path: "$.data.metrics.engagementMedian",
+          type: "number",
+          description: "互动量中位数",
+          description_en: "Engagement median",
+        },
+      ],
+    });
+    const keyField = endpoint("web.key_field_v1", {
+      title: "Key payload",
+      title_en: "Key payload",
+      key_response_fields: [
+        {
+          path: "$.data.engagementMedian",
+          name: "Engagement median",
+          description: "互动量中位数",
+          description_en: "Engagement median",
+        },
+      ],
+    });
+
+    const english = search("engagement median", [reviewedField]);
+    expect(english.results[0]).toMatchObject({
+      endpoint_id: reviewedField.endpoint_id,
+      score: 95,
+      matched_response_field_descriptions: [
+        expect.objectContaining({ path: "$.data.metrics.engagementMedian" }),
+      ],
+      match_reasons: expect.arrayContaining(["response-field:$.data.metrics.engagementMedian"]),
+    });
+    expect(search("互动量中位数", [reviewedField]).results[0]?.endpoint_id).toBe(
+      reviewedField.endpoint_id
+    );
+
+    const weighted = search("engagement median", [reviewedField, keyField]);
+    expect(weighted.results.map((result) => [result.endpoint_id, result.score])).toEqual([
+      [keyField.endpoint_id, 99],
+      [reviewedField.endpoint_id, 95],
+    ]);
+  });
+
+  it("does not index absent or empty unreviewed response field metadata", () => {
+    const withoutReviewedFields = endpoint("web.unreviewed_field_v1", {
+      title: "Generic payload",
+      title_en: "Generic payload",
+      response_field_descriptions: [],
+    });
+    expect(search("unreviewedSecretMetric", [withoutReviewedFields]).results).toEqual([]);
+  });
+
   it("does not turn a specific download limitation into a generic video exclusion", () => {
     const limited = endpoint("web.video_detail_v1", {
       title: "Video detail",

@@ -177,6 +177,7 @@ export class CatalogManager {
           ? "CATALOG_UNSAFE"
           : internalMessage.includes("JSON") ||
               internalMessage.includes("x-highlights") ||
+              internalMessage.includes("x-response-field-descriptions") ||
               internalMessage.includes("x-contract-status")
             ? "OPENAPI_PARSE_FAILED"
             : "OPENAPI_FETCH_FAILED";
@@ -395,6 +396,7 @@ export function catalogSemanticSignature(endpoint: EndpointCatalogEntry): string
     search_aliases: endpoint.search_aliases ?? [],
     use_cases: endpoint.use_cases ?? [],
     key_response_fields: endpoint.key_response_fields ?? [],
+    response_field_descriptions: endpoint.response_field_descriptions ?? [],
     highlights: normalizeHighlights(endpoint.highlights),
     highlights_en: normalizeHighlights(endpoint.highlights_en),
     endpoint_family: endpoint.endpoint_family,

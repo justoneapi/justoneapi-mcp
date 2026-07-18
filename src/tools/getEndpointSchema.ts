@@ -70,6 +70,7 @@ export async function getEndpointSchema(
     search_aliases: endpoint.search_aliases ?? [],
     use_cases: endpoint.use_cases ?? [],
     key_response_fields: endpoint.key_response_fields ?? [],
+    response_field_descriptions: endpoint.response_field_descriptions ?? [],
     contract_status: contractStatus,
     highlights: normalizeHighlights(endpoint.highlights),
     highlights_en: normalizeHighlights(endpoint.highlights_en),

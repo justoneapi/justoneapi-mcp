@@ -2,6 +2,7 @@ import {
   EndpointCatalogEntry,
   EndpointHighlight,
   EndpointKeyResponseField,
+  EndpointResponseFieldDescription,
 } from "../catalog/types.js";
 import { normalizeHighlights } from "../catalog/highlights.js";
 import { splitWords, toSnakeCase, unique } from "../catalog/stringUtils.js";
@@ -38,6 +39,7 @@ export type SearchEndpointResult = {
   matched: string[];
   matched_capabilities?: EndpointHighlight[];
   matched_key_response_fields?: EndpointKeyResponseField[];
+  matched_response_field_descriptions?: EndpointResponseFieldDescription[];
   relevant_limitations?: EndpointHighlight[];
   conditions?: EndpointHighlight[];
   match_reasons?: string[];
@@ -149,6 +151,9 @@ function scoreEndpointV2(
   const keyFields = (endpoint.key_response_fields ?? [])
     .filter(isGenerallyAvailable)
     .filter((field) => valueListMatches(keyFieldValues(field), query));
+  const responseFields = (endpoint.response_field_descriptions ?? []).filter((field) =>
+    valueListMatches(responseFieldValues(field), query)
+  );
   const reasons = unique([
     ...(query.platform === endpoint.platform ? [`platform:${endpoint.platform}`] : []),
     ...(exactMatch ? ["exact endpoint identifier"] : []),
@@ -160,6 +165,7 @@ function scoreEndpointV2(
   return baseResult(endpoint, score, reasons, {
     matched_capabilities: capabilities,
     matched_key_response_fields: keyFields,
+    matched_response_field_descriptions: responseFields,
     // Conflicting limitations exclude the endpoint above. The remaining
     // limitations are still returned so callers see important boundaries
     // before selecting or invoking an otherwise compatible endpoint.
@@ -200,6 +206,11 @@ function weightedSources(
       values: (endpoint.key_response_fields ?? [])
         .filter(isGenerallyAvailable)
         .flatMap(keyFieldValues),
+    },
+    {
+      label: "response-field",
+      weight: 0.75,
+      values: (endpoint.response_field_descriptions ?? []).flatMap(responseFieldValues),
     },
     {
       label: "capability",
@@ -325,7 +336,10 @@ function endpointHasStructuredIntent(
       .some((highlight) => highlightMatchesIntent(highlight, query)) ||
     (endpoint.key_response_fields ?? [])
       .filter(isGenerallyAvailable)
-      .some((field) => valueListMatches(keyFieldValues(field), query))
+      .some((field) => valueListMatches(keyFieldValues(field), query)) ||
+    (endpoint.response_field_descriptions ?? []).some((field) =>
+      valueListMatches(responseFieldValues(field), query)
+    )
   );
 }
 
@@ -339,7 +353,10 @@ function endpointHasPositiveIntentEvidence(
       .some((highlight) => highlightMatchesIntent(highlight, query)) ||
     (endpoint.key_response_fields ?? [])
       .filter(isGenerallyAvailable)
-      .some((field) => valueListMatches(keyFieldValues(field), query))
+      .some((field) => valueListMatches(keyFieldValues(field), query)) ||
+    (endpoint.response_field_descriptions ?? []).some((field) =>
+      valueListMatches(responseFieldValues(field), query)
+    )
   );
 }
 
@@ -617,6 +634,10 @@ function keyFieldValues(field: EndpointKeyResponseField): string[] {
   ];
 }
 
+function responseFieldValues(field: EndpointResponseFieldDescription): string[] {
+  return [field.path, field.name, field.description, field.description_en];
+}
+
 function isGenerallyAvailable(field: EndpointKeyResponseField): boolean {
   if (!field.availability) return true;
   return ["all", "stable", "universal", "all_variants"].includes(field.availability.toLowerCase());
@@ -710,7 +731,8 @@ function foldFamilies(
       const evidenceBacked = values.filter(
         (result) =>
           (result.matched_capabilities?.length ?? 0) > 0 ||
-          (result.matched_key_response_fields?.length ?? 0) > 0
+          (result.matched_key_response_fields?.length ?? 0) > 0 ||
+          (result.matched_response_field_descriptions?.length ?? 0) > 0
       );
       const eligible = evidenceBacked.length ? evidenceBacked : values;
       const recommended = eligible.find(

@@ -274,6 +274,166 @@ describe("structured catalog projection", () => {
     );
   });
 
+  it("strictly merges only reviewed localized response field descriptions", () => {
+    const field = (description: string, overrides: Record<string, unknown> = {}) => ({
+      name: "serviceScore",
+      path: "$.data.metrics[*].serviceScore",
+      type: "number | null",
+      description,
+      ...overrides,
+    });
+    const document = (
+      summary: string,
+      description: string,
+      responseFields: unknown = [field(description)]
+    ) => ({
+      "x-openapi-release-id": "reviewed-fields-release",
+      paths: {
+        "/api/taobao/shop-metrics/v1": {
+          get: {
+            operationId: "getTaobaoShopMetricsV1",
+            summary,
+            "x-response-field-descriptions": responseFields,
+            responses: {},
+          },
+        },
+      },
+    });
+    const english = document("Shop metrics", "Reviewed seller service score.");
+    const chinese = document("店铺指标", "已审核的卖家服务评分。");
+    const buildPair = (localized: Record<string, unknown>) =>
+      buildCatalogBundle({
+        openapi: english,
+        openapiZh: localized,
+        openapiText: JSON.stringify(english),
+        openapiZhText: JSON.stringify(localized),
+        openapiUrl: "https://docs.justoneapi.com/openapi.json",
+        openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
+        requireLocalizedReleaseId: true,
+      });
+
+    const endpoint = buildPair(chinese).catalog.endpoints[0];
+    expect(endpoint.response_field_descriptions).toEqual([
+      {
+        name: "serviceScore",
+        path: "$.data.metrics[*].serviceScore",
+        type: "number | null",
+        description: "已审核的卖家服务评分。",
+        description_en: "Reviewed seller service score.",
+      },
+    ]);
+    expect(catalogSemanticSignature(endpoint)).not.toBe(
+      catalogSemanticSignature({
+        ...endpoint,
+        response_field_descriptions: [
+          { ...endpoint.response_field_descriptions![0], description: "已审核的店铺服务评分。" },
+        ],
+      })
+    );
+
+    const mismatches = [
+      document("店铺指标", "已审核的卖家服务评分。", []),
+      document("店铺指标", "已审核的卖家服务评分。", [
+        field("已审核的卖家服务评分。", { path: "$.data.otherScore" }),
+      ]),
+      document("店铺指标", "已审核的卖家服务评分。", [
+        field("已审核的卖家服务评分。", { name: "otherScore" }),
+      ]),
+      document("店铺指标", "已审核的卖家服务评分。", [
+        field("已审核的卖家服务评分。", { type: "string" }),
+      ]),
+    ];
+    for (const mismatch of mismatches) {
+      expect(() => buildPair(mismatch)).toThrow(/response-field-description.*do not match/);
+    }
+  });
+
+  it("rejects empty, malformed, duplicate, or unreviewed response field entries", () => {
+    const operation = (fields: unknown) => ({
+      summary: "Test",
+      "x-response-field-descriptions": fields,
+      responses: {},
+    });
+    const document = (fields: unknown) => ({
+      paths: { "/api/web/test/v1": { get: operation(fields) } },
+    });
+
+    for (const fields of [
+      {},
+      ["$.data.value"],
+      [{ name: "value", path: "$.data.value", type: "string", description: "" }],
+      [
+        {
+          name: "value",
+          path: "$.data.value",
+          type: "string",
+          description: "No reliable business description is available yet.",
+        },
+      ],
+      [
+        {
+          name: "value",
+          path: "$.data.value",
+          type: "string",
+          description: "Reviewed value.",
+          reviewed: false,
+        },
+      ],
+      [
+        {
+          name: "value",
+          path: "$.other.value",
+          type: "string",
+          description: "Reviewed value.",
+        },
+      ],
+      [
+        { name: "value", path: "$.data.value", type: "string", description: "Value." },
+        { name: "value", path: "$.data.value", type: "string", description: "Value." },
+      ],
+    ]) {
+      expect(() => build(document(fields))).toThrow(
+        /x-response-field-descriptions|paths must be unique/
+      );
+    }
+  });
+
+  it("does not derive searchable reviewed fields from a response schema or example", () => {
+    const openapi = {
+      paths: {
+        "/api/web/test/v1": {
+          get: {
+            summary: "Generic payload",
+            "x-contract-status": { status: "verified" },
+            responses: {
+              200: {
+                content: {
+                  "application/json": {
+                    schema: verifiedEnvelope({
+                      type: "object",
+                      properties: {
+                        opaqueReviewMetric: {
+                          type: "number",
+                          description: "Schema-only opaque review metric.",
+                        },
+                      },
+                    }),
+                    example: { code: 0, data: { opaqueReviewMetric: 42 } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const endpoint = build(openapi).catalog.endpoints[0];
+    expect(endpoint.response_field_descriptions).toEqual([]);
+    expect(
+      searchEndpoints([endpoint], { query: "opaque review metric" }, { mode: "v2" }).results
+    ).toEqual([]);
+  });
+
   it("keeps structured discovery metadata and resolves a self-contained response schema", () => {
     const openapi = {
       tags: [

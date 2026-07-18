@@ -72,6 +72,19 @@ export type EndpointKeyResponseField = {
   availability?: string;
 };
 
+/**
+ * A customer-facing response field description explicitly published by the
+ * reviewed OpenAPI contract. Runtime examples and docs-only inferred fields
+ * are intentionally not part of this catalog type.
+ */
+export type EndpointResponseFieldDescription = {
+  name: string;
+  path: string;
+  type: string;
+  description: string;
+  description_en: string;
+};
+
 export type EndpointCatalogEntry = {
   endpoint_id: string;
   platform: string;
@@ -101,6 +114,7 @@ export type EndpointCatalogEntry = {
   search_aliases?: string[];
   use_cases?: EndpointUseCase[];
   key_response_fields?: EndpointKeyResponseField[];
+  response_field_descriptions?: EndpointResponseFieldDescription[];
   endpoint_family?: string;
   contract_status?: EndpointContractStatus;
   response_schema?: JsonValue;

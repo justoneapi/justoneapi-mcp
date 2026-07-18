@@ -8,6 +8,7 @@ import {
   EndpointKeyResponseField,
   EndpointPagination,
   EndpointParam,
+  EndpointResponseFieldDescription,
   EndpointUseCase,
   JsonValue,
 } from "./types.js";
@@ -77,6 +78,7 @@ type OpenApiOperation = {
   "x-search-aliases"?: unknown;
   "x-use-cases"?: unknown;
   "x-key-response-fields"?: unknown;
+  "x-response-field-descriptions"?: unknown;
   "x-endpoint-family"?: string;
   "x-contract-status"?: unknown;
 };
@@ -117,7 +119,7 @@ export type BuildCatalogOptions = {
 };
 
 const VERSION_RE = /^v\d+$/i;
-export const CATALOG_GENERATOR_VERSION = "3";
+export const CATALOG_GENERATOR_VERSION = "4";
 
 export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -348,6 +350,11 @@ function buildEndpoint(
     key_response_fields: mergeLocalizedKeyResponseFields(
       operation["x-key-response-fields"],
       zhOperation?.["x-key-response-fields"]
+    ),
+    response_field_descriptions: mergeLocalizedResponseFieldDescriptions(
+      operation["x-response-field-descriptions"],
+      zhOperation?.["x-response-field-descriptions"],
+      Boolean(zhOperation)
     ),
     endpoint_family:
       cleanOptionalString(operation["x-endpoint-family"]) ?? inferEndpointFamily(parsed),
@@ -716,6 +723,98 @@ function mergeLocalizedKeyResponseFields(
     throw new Error("English and Chinese OpenAPI key-response-field structures do not match");
   }
   return merged;
+}
+
+const RESPONSE_FIELD_PATH_RE = /^\$\.data(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\*\])*$/;
+const RESPONSE_FIELD_KEYS = new Set(["name", "path", "type", "description"]);
+const UNREVIEWED_RESPONSE_FIELD_DESCRIPTIONS = new Set([
+  "暂无可靠业务说明",
+  "no reliable business description is available yet.",
+]);
+
+function normalizeResponseFieldDescriptions(
+  value: unknown,
+  locale: "English" | "Chinese"
+): EndpointResponseFieldDescription[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${locale} x-response-field-descriptions must be an array`);
+  }
+
+  const paths = new Set<string>();
+  return value.map((item, index) => {
+    if (!isObject(item)) {
+      throw new Error(`${locale} x-response-field-descriptions[${index}] must be an object`);
+    }
+    const unknownKeys = Object.keys(item).filter((key) => !RESPONSE_FIELD_KEYS.has(key));
+    if (unknownKeys.length) {
+      throw new Error(`${locale} x-response-field-descriptions[${index}] has unknown fields`);
+    }
+    const name = cleanOptionalString(item.name);
+    const path = cleanOptionalString(item.path);
+    const type = cleanOptionalString(item.type);
+    const description = cleanOptionalString(item.description);
+    if (!name || !path || !type || !description) {
+      throw new Error(
+        `${locale} x-response-field-descriptions[${index}] must define non-empty name, path, type, and description`
+      );
+    }
+    if (UNREVIEWED_RESPONSE_FIELD_DESCRIPTIONS.has(description.toLowerCase())) {
+      throw new Error(
+        `${locale} x-response-field-descriptions[${index}] must contain a reviewed business description`
+      );
+    }
+    if (!RESPONSE_FIELD_PATH_RE.test(path)) {
+      throw new Error(
+        `${locale} x-response-field-descriptions[${index}].path must use the supported $.data JSONPath subset`
+      );
+    }
+    if (paths.has(path)) {
+      throw new Error(`${locale} x-response-field-descriptions paths must be unique`);
+    }
+    paths.add(path);
+    return { name, path, type, description, description_en: description };
+  });
+}
+
+function mergeLocalizedResponseFieldDescriptions(
+  englishValue: unknown,
+  chineseValue: unknown,
+  localized: boolean
+): EndpointResponseFieldDescription[] {
+  const english = normalizeResponseFieldDescriptions(englishValue, "English");
+  if (!localized) return english;
+  if (englishValue === undefined || chineseValue === undefined) {
+    if (englishValue === undefined && chineseValue === undefined) return [];
+    throw new Error(
+      "English and Chinese OpenAPI response-field-description structures do not match"
+    );
+  }
+  const chinese = normalizeResponseFieldDescriptions(chineseValue, "Chinese");
+  if (english.length !== chinese.length) {
+    throw new Error(
+      "English and Chinese OpenAPI response-field-description structures do not match"
+    );
+  }
+  return english.map((field, index) => {
+    const localizedField = chinese[index];
+    if (
+      field.path !== localizedField.path ||
+      field.name !== localizedField.name ||
+      field.type !== localizedField.type
+    ) {
+      throw new Error(
+        "English and Chinese OpenAPI response-field-description machine fields do not match"
+      );
+    }
+    return {
+      name: field.name,
+      path: field.path,
+      type: field.type,
+      description: localizedField.description,
+      description_en: field.description,
+    };
+  });
 }
 
 function compactObject<T extends Record<string, unknown>>(value: T): T {

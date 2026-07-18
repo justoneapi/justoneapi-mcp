@@ -57,6 +57,20 @@ describe("get_endpoint_schema public projection", () => {
                 aliases: ["城市分布"],
               },
             ],
+            "x-response-field-descriptions": [
+              {
+                name: "city",
+                path: "$.data.cityDistribution[*].city",
+                type: "string",
+                description: "Reviewed city name in the audience distribution.",
+              },
+              {
+                name: "ratio",
+                path: "$.data.cityDistribution[*].ratio",
+                type: "number",
+                description: "Reviewed audience ratio for the city.",
+              },
+            ],
             "x-contract-status": { status: "verified", reason: "Verified public contract" },
             "x-highlights": [
               {
@@ -145,6 +159,22 @@ describe("get_endpoint_schema public projection", () => {
       data: { cityDistribution: [{ city: "example", ratio: 1 }] },
     });
     expect(result.response_example_synthetic).toBe(true);
+    expect(result.response_field_descriptions).toEqual([
+      {
+        name: "city",
+        path: "$.data.cityDistribution[*].city",
+        type: "string",
+        description: "Reviewed city name in the audience distribution.",
+        description_en: "Reviewed city name in the audience distribution.",
+      },
+      {
+        name: "ratio",
+        path: "$.data.cityDistribution[*].ratio",
+        type: "number",
+        description: "Reviewed audience ratio for the city.",
+        description_en: "Reviewed audience ratio for the city.",
+      },
+    ]);
     expect(JSON.stringify(result)).not.toMatch(
       /actualSupplier|routeRef|functionId|normalizerKey|evidence|fixture/i
     );

@@ -16,7 +16,7 @@ class MemoryStore implements CatalogStore {
   }
 }
 
-function runtime(bundle: CatalogBundle): RuntimeContext {
+function runtime(bundle: CatalogBundle, privateCatalogTerms: string[] = []): RuntimeContext {
   const config = {
     baseUrl: "https://api.justoneapi.com",
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
@@ -25,14 +25,17 @@ function runtime(bundle: CatalogBundle): RuntimeContext {
     catalogMemoryTtlMs: 60_000,
     debug: false,
     searchV2Enabled: false,
-    privateCatalogTerms: [],
+    privateCatalogTerms,
     timeoutMs: 1_000,
     retry: 0,
   };
   return {
     transport: "stdio",
     config,
-    catalogManager: new CatalogManager(new MemoryStore(bundle), bundle, config),
+    catalogManager: new CatalogManager(new MemoryStore(bundle), bundle, {
+      ...config,
+      privateCatalogTerms: [],
+    }),
     logger: silentLogger,
     getToken: () => "test-token",
     isAdmin: () => false,
@@ -139,7 +142,7 @@ describe("get_endpoint_schema public projection", () => {
 
     const result = await getEndpointSchema(
       { endpoint_id: "douyin.fans_portrait_v1" },
-      runtime(bundle)
+      runtime(bundle, ["Audience portrait"])
     );
     expect(result.highlights).toEqual([
       { type: "INFO", content: "Legacy client guidance.", kind: "GUIDANCE" },

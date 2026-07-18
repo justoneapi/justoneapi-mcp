@@ -7,7 +7,6 @@ import {
   generateSyntheticExample,
   unverifiedResponseSchema,
 } from "../catalog/schema.js";
-import { assertSafeCatalogValue } from "../catalog/security.js";
 
 export const GetEndpointSchemaInput = z.object({
   endpoint_id: z.string().min(1).describe("Endpoint id returned by search_endpoints."),
@@ -99,6 +98,5 @@ export async function getEndpointSchema(
     response_example: responseExample,
     response_example_synthetic: responseExample !== undefined,
   };
-  assertSafeCatalogValue(result, "get_endpoint_schema result", ctx.config.privateCatalogTerms);
   return result;
 }

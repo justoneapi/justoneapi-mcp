@@ -17,8 +17,7 @@ export type McpErrorCode =
   | "SECURITY_CONFIGURATION_REQUIRED"
   | "NETWORK_TIMEOUT"
   | "NETWORK_ERROR"
-  | "UPSTREAM_ERROR"
-  | "UNSAFE_RESPONSE";
+  | "UPSTREAM_ERROR";
 
 export type McpErrorPayload = {
   code: McpErrorCode;
@@ -93,15 +92,13 @@ export function defaultMessage(code: McpErrorCode): string {
     case "OPENAPI_PARSE_FAILED":
       return "解析 OpenAPI 失败。";
     case "SECURITY_CONFIGURATION_REQUIRED":
-      return "服务端未配置私有信息安全词表，已禁止调用接口。";
+      return "服务端未配置私有信息安全词表，接口目录刷新或回滚不可用。";
     case "NETWORK_TIMEOUT":
       return "网络请求超时。";
     case "NETWORK_ERROR":
       return "网络请求失败。";
     case "INTERNAL_ERROR":
       return "内部服务器错误。";
-    case "UNSAFE_RESPONSE":
-      return "响应因包含非公开内部信息而被安全拦截。";
     case "UPSTREAM_ERROR":
     default:
       return "上游服务错误。";

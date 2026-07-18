@@ -4,7 +4,6 @@ import { CatalogBundle, CatalogStore } from "../src/catalog/types.js";
 import { callEndpoint } from "../src/tools/callEndpoint.js";
 import { RuntimeContext } from "../src/common/runtime.js";
 import { silentLogger } from "../src/common/logger.js";
-import { assertSafeEndpointResponseValue, assertSafePublicValue } from "../src/catalog/security.js";
 
 const bundle: CatalogBundle = {
   meta: {
@@ -165,25 +164,25 @@ describe("callEndpoint", () => {
     vi.unstubAllGlobals();
   });
 
-  it("fails closed before fetch when the private runtime registry is missing", async () => {
-    const fetchMock = vi.fn();
+  it("calls the endpoint without a private runtime registry and returns the payload unchanged", async () => {
+    const payload = {
+      code: 0,
+      message: null,
+      data: { routeRef: "private-route", link: "http://127.0.0.1/data" },
+    };
+    const fetchMock = vi.fn(async () => Response.json(payload));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(
-      callEndpoint(
-        {
-          endpoint_id: "kuaishou.search_video_v2",
-          params: { keyword: "美食" },
-        },
-        runtime([])
-      )
-    ).rejects.toMatchObject({
-      payload: {
-        code: "SECURITY_CONFIGURATION_REQUIRED",
-        message: "服务端未配置私有信息安全词表，已禁止调用接口。",
+    const result = await callEndpoint(
+      {
+        endpoint_id: "kuaishou.search_video_v2",
+        params: { keyword: "美食" },
       },
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
+      runtime([])
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ success: true, data: payload.data, raw: payload });
   });
 
   it("maps params, truncates large arrays, and returns next_step", async () => {
@@ -257,71 +256,6 @@ describe("callEndpoint", () => {
       expect(result.data).toEqual(original.data);
     }
     expect(payload).toEqual(original);
-  });
-
-  it("allows arbitrary public HTTP(S) hosts only for live endpoint responses without mutation", () => {
-    const payload = {
-      code: 0,
-      data: {
-        cdn: "https://d111111abcdef8.cloudfront.net:8443/media/video.mp4",
-        article: "http://www.nytimes.com/story?keyword=cat&monkey=banana",
-        ipv6: "https://[2606:4700:4700::1111]:9443/media/video.mp4",
-        literal_percent_path: "https://assets.public-cdn.com/50%25-off/banner.jpg",
-        literal_percent_query: "https://shop.public-cdn.com/deals?discount=50%25",
-        public_ipv4: "http://8.8.8.8/public-data",
-      },
-    };
-    const original = structuredClone(payload);
-
-    expect(() =>
-      assertSafeEndpointResponseValue(payload, {
-        method: "GET",
-        path: "/api/kuaishou/search-video/v2",
-      })
-    ).not.toThrow();
-    expect(payload).toEqual(original);
-
-    // Catalog, OpenAPI, account, and other generic public projections retain
-    // the fixed host allowlist. The relaxed policy is endpoint-response only.
-    expect(() => assertSafePublicValue(payload)).toThrow(/Non-public URL/);
-    expect(() =>
-      assertSafePublicValue({ link: "https://example.com:8443/media/video.mp4" })
-    ).toThrow(/Non-public URL port/);
-  });
-
-  it.each([
-    "http://0.1.2.3/data",
-    "http://10.0.0.1/data",
-    "http://100.64.0.1/data",
-    "http://100.127.255.255/data",
-    "http://127.0.0.1/data",
-    "http://169.254.169.254/data",
-    "http://172.16.0.1/data",
-    "http://172.31.255.255/data",
-    "http://192.168.0.1/data",
-    "http://192.0.2.1/data",
-    "http://198.18.0.1/data",
-    "http://198.51.100.1/data",
-    "http://203.0.113.1/data",
-    "http://224.0.0.1/data",
-    "http://255.255.255.255/data",
-    "http://intranet/data",
-    "http://[::]/data",
-    "http://[::1]/data",
-    "http://[fe80::1]/data",
-    "http://[fc00::1]/data",
-    "http://[fdff::1]/data",
-    "http://[ff02::1]/data",
-    "http://[2001:db8::1]/data",
-    "http://[::ffff:127.0.0.1]/data",
-    "http://[::ffff:a00:1]/data",
-  ])("rejects non-public endpoint-response address %s", (link) => {
-    expect(() =>
-      assertSafeEndpointResponseValue(
-        { code: 0, data: { link } },
-        { method: "GET", path: "/api/kuaishou/search-video/v2" }
-      )
-    ).toThrow(/Non-public URL|private network address/);
   });
 
   it("maps upstream token limit errors", async () => {
@@ -410,31 +344,18 @@ describe("callEndpoint", () => {
       { code: 0, data: { cookies: { cookies_buffer: "https://router.internal/page" } } },
     ],
     ["business error", { code: 202, data: { cookies: { cookies_buffer: "next" } } }],
-  ])("rejects a legacy pagination response with %s", async (_name, payload) => {
+  ])("does not block a legacy pagination response with %s", async (_name, payload) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json(payload))
     );
-    await expect(
-      callEndpoint(
-        { endpoint_id: "weixin.search_article_v1", params: { keyword: "news" } },
-        runtime(["private-registry-canary"], legacyPaginationBundle)
-      )
-    ).rejects.toMatchObject({ payload: { code: "UNSAFE_RESPONSE" } });
-  });
+    const result = await callEndpoint(
+      { endpoint_id: "weixin.search_article_v1", params: { keyword: "news" } },
+      runtime([], legacyPaginationBundle)
+    );
 
-  it.each([
-    "/api/weixin/search-article/v1",
-    "/api/weixin/search-article/v2",
-    "/api/weixin/search-miniprogram/v1",
-    "/api/weixin/search-account/v2",
-    "/api/weixin-channels/search-video/v1",
-    "/api/weixin-channels/search-video/v2",
-    "/api/weixin-channels/search-account/v1",
-  ])("allows only the verified pagination response path for POST %s", (path) => {
-    const payload = { code: 0, data: { cookies: { cookies_buffer: "next-page" } } };
-    expect(() => assertSafeEndpointResponseValue(payload, { method: "POST", path })).not.toThrow();
-    expect(() => assertSafeEndpointResponseValue(payload, { method: "GET", path })).toThrow();
+    expect(result.success).toBe(payload.code === 0);
+    if (result.success) expect(result.data).toEqual(payload.data);
   });
 
   it.each([
@@ -688,52 +609,24 @@ describe("callEndpoint", () => {
       { code: 0, data: { link: "http://[::ffff:7f00:1]/" } },
       [],
     ],
-  ])("blocks unsafe runtime payloads for %s", async (_name, payload, privateTerms) => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json(payload))
-    );
-    await expect(
-      callEndpoint(
+  ])(
+    "returns a previously blocked runtime payload for %s",
+    async (_name, payload, privateTerms) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json(payload))
+      );
+      const result = await callEndpoint(
         {
           endpoint_id: "kuaishou.search_video_v2",
           params: { keyword: "美食" },
         },
-        runtime(privateTerms.length ? privateTerms : ["private-registry-canary"])
-      )
-    ).rejects.toMatchObject({
-      payload: {
-        code: "UNSAFE_RESPONSE",
-        message: "响应因包含非公开内部信息而被安全拦截。",
-      },
-    });
-  });
+        runtime(privateTerms)
+      );
 
-  it.each([
-    "apikey",
-    "accesskey",
-    "secretkey",
-    "session",
-    "sessionid",
-    "refreshtoken",
-    "accesstoken",
-    "api_key",
-    "accessToken",
-    "signature",
-    "sig",
-    "jwt",
-    "authkey",
-    "authtoken",
-    "sessiontoken",
-    "xapikey",
-  ])("blocks compact or structured sensitive query key %s", (queryKey) => {
-    expect(() =>
-      assertSafeEndpointResponseValue(
-        { code: 0, data: { link: `https://www.nytimes.com/story?${queryKey}=value` } },
-        { method: "GET", path: "/api/kuaishou/search-video/v2" }
-      )
-    ).toThrow(/Credential-bearing URL/);
-  });
+      expect(result).toMatchObject({ success: true, data: payload.data, raw: payload });
+    }
+  );
 
   it.each([
     "sk-proj-abcdefghijklmnopqrstuv",
@@ -744,28 +637,19 @@ describe("callEndpoint", () => {
     "AIzaABCDEFGHIJKLMNOPQRSTUVWXYZ123456789",
     "eyJabcdefghijk.eyJabcdefghijk.abcdefghijk",
     "jwt_eyJabcdefghijk.eyJabcdefghijk.abcdefghijk",
-  ])("blocks and redacts high-confidence runtime secret literal fixtures", async (secret) => {
+  ])("returns high-confidence secret-like runtime fixture %s unchanged", async (secret) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json({ code: 0, data: { value: secret } }))
     );
-    try {
-      await callEndpoint(
-        {
-          endpoint_id: "kuaishou.search_video_v2",
-          params: { keyword: "美食" },
-        },
-        runtime()
-      );
-      throw new Error("Expected unsafe response rejection");
-    } catch (error) {
-      expect(error).toMatchObject({
-        payload: {
-          code: "UNSAFE_RESPONSE",
-          message: "响应因包含非公开内部信息而被安全拦截。",
-        },
-      });
-      expect((error as Error).message).not.toContain(secret);
-    }
+    const result = await callEndpoint(
+      {
+        endpoint_id: "kuaishou.search_video_v2",
+        params: { keyword: "美食" },
+      },
+      runtime([])
+    );
+
+    expect(result).toMatchObject({ success: true, data: { value: secret } });
   });
 });

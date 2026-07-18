@@ -135,12 +135,12 @@ values are used only for fail-closed scanning and are never written into the cat
 package-release configurations require this secret to be non-empty; configure it before deploy or
 publish rather than placing the private registry in source control.
 
-`call_endpoint` also fails closed at runtime when this registry is unavailable. This applies to
-local stdio/npm operation as well as hosted transports: endpoint search and schema inspection stay
-available only from the release-scanned bundled catalog, while dynamic refresh, promotion,
-rollback, and direct calls remain disabled. A trusted operator must inject the confidential registry
-before those operations are enabled. The registry must never be placed in client configuration that
-will be shared publicly.
+Runtime endpoint and account calls do not depend on this registry and return upstream payloads
+through the normal truncation behavior. When the registry is unavailable, endpoint search and
+schema inspection stay available from the release-scanned bundled catalog, while dynamic refresh,
+promotion, and rollback remain disabled. A trusted operator must inject the confidential registry
+before those catalog maintenance operations are enabled. The registry must never be placed in
+client configuration that will be shared publicly.
 
 Catalog refreshes are staged as a candidate release, verified, and then promoted to `active` while
 retaining `previous`. An administrator can invoke `refresh_catalog` with `{ "rollback": true }` to

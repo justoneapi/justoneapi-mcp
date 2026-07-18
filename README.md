@@ -58,10 +58,11 @@ You can also run the MCP server locally with `npx`.
 }
 ```
 
-For security, local `call_endpoint` is enabled only in a trusted operator environment that also
-provides the confidential `JUSTONEAPI_PRIVATE_CATALOG_TERMS` registry. Without it, discovery and
-schema tools use only the release-scanned bundled catalog; direct calls, dynamic refresh, promotion,
-and rollback fail closed. Do not copy that registry into shared or public client configuration.
+The confidential `JUSTONEAPI_PRIVATE_CATALOG_TERMS` registry is an operator-only catalog release
+safeguard. Without it, discovery and schema tools use the release-scanned bundled catalog, and
+dynamic catalog refresh, promotion, and rollback remain disabled. Runtime API and account calls do
+not require this registry and return the upstream payload through the normal truncation behavior.
+Do not copy the registry into shared or public client configuration.
 
 ## Token
 

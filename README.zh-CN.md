@@ -38,10 +38,10 @@ Authorization 请求头。
 }
 ```
 
-出于安全考虑，本地 `call_endpoint` 仅在受信任的运维环境同时提供机密的
-`JUSTONEAPI_PRIVATE_CATALOG_TERMS` 词表时启用。未配置时，接口检索和 Schema 查询只使用
-发布阶段已扫描的内置 catalog；直接调用、动态刷新、晋级和回滚均会安全失败。请勿把该词表
-写入会共享或公开的客户端配置。
+机密的 `JUSTONEAPI_PRIVATE_CATALOG_TERMS` 词表仅用于运维侧的 catalog 发布保护。未配置时，
+接口检索和 Schema 查询只使用发布阶段已扫描的内置 catalog，动态刷新、晋级和回滚保持禁用；
+接口调用和账户工具不依赖该词表，响应会按现有截断逻辑正常返回。请勿把该词表写入会共享或
+公开的客户端配置。
 
 ### 本地 stdio
 

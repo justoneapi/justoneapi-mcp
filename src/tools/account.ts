@@ -3,7 +3,6 @@ import { tokenHash } from "../common/auth.js";
 import { McpToolError, defaultMessage, errorResult, mapUpstreamCode } from "../common/errors.js";
 import { RuntimeContext } from "../common/runtime.js";
 import { truncateJson } from "../common/truncate.js";
-import { assertSafePublicValue } from "../catalog/security.js";
 
 export const GetAccountBalanceInput = z.object({});
 
@@ -23,10 +22,8 @@ export async function getAccountBalance(
   ctx: RuntimeContext
 ) {
   const token = requireToken(ctx);
-  requirePrivateRegistry(ctx, "get_account_balance");
   const started = Date.now();
   const payload = await callAccountEndpoint("/user/get-balance", token, ctx);
-  assertSafeAccountPayload(payload, ctx, "get_account_balance");
   const result = buildResult(payload, "get_account_balance");
   await logAccountTool(ctx, "get_account_balance", token, payload, started);
   return result;
@@ -37,10 +34,8 @@ export async function getUsageSummary(
   ctx: RuntimeContext
 ) {
   const token = requireToken(ctx);
-  requirePrivateRegistry(ctx, "get_usage_summary");
   const started = Date.now();
   const payload = await callAccountEndpoint("/user/get-usage-summary", token, ctx);
-  assertSafeAccountPayload(payload, ctx, "get_usage_summary");
   const truncated = truncateJson(payload, {
     maxItems: input.max_items ?? 100,
     maxTextLength: 4000,
@@ -66,40 +61,6 @@ function requireToken(ctx: RuntimeContext): string {
     throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
   }
   return token;
-}
-
-function requirePrivateRegistry(
-  ctx: RuntimeContext,
-  tool: "get_account_balance" | "get_usage_summary"
-): void {
-  if (ctx.config.privateCatalogTerms.length) return;
-  ctx.logger.warn("account_tool_security_registry_missing", {
-    transport: ctx.transport,
-    tool,
-  });
-  throw new McpToolError({
-    code: "SECURITY_CONFIGURATION_REQUIRED",
-    message: defaultMessage("SECURITY_CONFIGURATION_REQUIRED"),
-  });
-}
-
-function assertSafeAccountPayload(
-  payload: UpstreamPayload,
-  ctx: RuntimeContext,
-  tool: "get_account_balance" | "get_usage_summary"
-): void {
-  try {
-    assertSafePublicValue(payload, `${tool} response`, ctx.config.privateCatalogTerms);
-  } catch {
-    ctx.logger.warn("unsafe_response_blocked", {
-      transport: ctx.transport,
-      tool,
-    });
-    throw new McpToolError({
-      code: "UNSAFE_RESPONSE",
-      message: defaultMessage("UNSAFE_RESPONSE"),
-    });
-  }
 }
 
 async function callAccountEndpoint(

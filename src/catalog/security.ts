@@ -128,7 +128,7 @@ type PublicParameterCandidate = {
   description_en?: unknown;
 };
 
-type SafetyScanMode = "strict" | "catalog" | "endpoint-response";
+type SafetyScanMode = "strict" | "catalog";
 
 type PreparedPrivateTerm = {
   normalized: string;
@@ -248,9 +248,8 @@ export function assertSafePublicValue(
 
 /**
  * Validate a public catalog projection while retaining the seven documented
- * legacy `cookies_buffer` pagination parameters. Live API payloads use the
- * separate endpoint-aware response validator below; generic values remain
- * strict through `assertSafePublicValue`.
+ * legacy `cookies_buffer` pagination parameters. Generic public projections
+ * remain strict through `assertSafePublicValue`.
  */
 export function assertSafeCatalogValue(
   value: unknown,
@@ -258,76 +257,6 @@ export function assertSafeCatalogValue(
   privateTerms: readonly string[] = []
 ): void {
   visit(value, context, new Map<object, number>(), preparePrivateTerms(privateTerms), "catalog");
-}
-
-/**
- * Validate a live API response. The only credential-like response field that
- * can be retained is the documented pagination cursor at
- * `data.cookies.cookies_buffer` for the seven legacy search operations.
- */
-export function assertSafeEndpointResponseValue(
-  value: unknown,
-  operation: PublicOperationIdentity,
-  context = "endpoint response",
-  privateTerms: readonly string[] = []
-): void {
-  const preparedPrivateTerms = preparePrivateTerms(privateTerms);
-  if (!isLegacyPublicPaginationOperation(operation) || !isRecord(value) || value.code !== 0) {
-    assertSafeEndpointResponseBody(value, context, preparedPrivateTerms);
-    return;
-  }
-
-  const data = value.data;
-  if (!isRecord(data) || !Object.hasOwn(data, "cookies")) {
-    assertSafeEndpointResponseBody(value, context, preparedPrivateTerms);
-    return;
-  }
-  const cookies = data.cookies;
-  if (!isRecord(cookies) || !Object.hasOwn(cookies, "cookies_buffer")) {
-    assertSafeEndpointResponseBody(value, context, preparedPrivateTerms);
-    return;
-  }
-
-  const paginationState = cookies.cookies_buffer;
-  if (paginationState !== null && typeof paginationState !== "string") {
-    throw new Error(`Invalid public pagination state at ${context}`);
-  }
-
-  // Scan the cursor value and every sibling independently before removing the
-  // two known credential-like key names from the structural scan. Secret,
-  // private-term, URL, and nested credential checks remain fully active.
-  assertSafeEndpointResponseBody(
-    paginationState,
-    `${context} pagination state`,
-    preparedPrivateTerms
-  );
-  const paginationMetadata = { ...cookies };
-  delete paginationMetadata.cookies_buffer;
-  assertSafeEndpointResponseBody(
-    paginationMetadata,
-    `${context} pagination metadata`,
-    preparedPrivateTerms
-  );
-
-  const publicData = { ...data };
-  delete publicData.cookies;
-  const publicEnvelope = { ...value, data: publicData };
-  assertSafeEndpointResponseBody(publicEnvelope, context, preparedPrivateTerms);
-}
-
-/**
- * Live endpoint payloads may legitimately contain media, article, and CDN URLs
- * from public hosts that are not known when the catalog is built. Keep the
- * catalog/document scanners on their fixed host allowlist, but accept arbitrary
- * public HTTP(S) hosts here after all private-network, credential, private-term,
- * protocol, userinfo, query, and port checks have passed.
- */
-function assertSafeEndpointResponseBody(
-  value: unknown,
-  context: string,
-  privateTerms: PreparedPrivateTerms
-): void {
-  visit(value, context, new Map<object, number>(), privateTerms, "endpoint-response");
 }
 
 export function parsePrivateCatalogTerms(value: string | undefined): string[] {
@@ -579,15 +508,11 @@ function assertSafeText(
     assertSafeDecodedComponent(host, `${path} URL host`, privateTerms);
     if (
       isPrivateHost(host) ||
-      (mode !== "endpoint-response" &&
-        !PUBLIC_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`)))
+      !PUBLIC_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))
     ) {
       throw new Error(`Non-public URL in public catalog at ${path}`);
     }
-    // Live responses are returned as data and are never fetched by this MCP
-    // scanner, so preserve explicit public ports there. Catalog/OpenAPI and
-    // generic public projections retain the stricter no-port policy.
-    if (url.port && mode !== "endpoint-response") {
+    if (url.port) {
       throw new Error(`Non-public URL port in public catalog at ${path}`);
     }
 
@@ -867,9 +792,9 @@ function normalizePrivateTerms(values: readonly string[]): string[] {
         continue;
       }
       if (/[\s/:@?#\[\]]/.test(term)) continue;
-      // URL applies the same IDNA/punycode host canonicalization used when a
-      // live response URL is parsed. Keeping both forms makes a Unicode
-      // registry entry and an xn-- response host (or the reverse) equivalent.
+      // URL applies the same IDNA/punycode host canonicalization used by the
+      // catalog scanner. Keeping both forms makes a Unicode registry entry and
+      // an xn-- catalog host (or the reverse) equivalent.
       const host = normalizeHostname(new URL(`https://${term}/`).hostname);
       if (host) normalized.add(host);
     } catch {

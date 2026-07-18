@@ -79,33 +79,29 @@ describe("account tools", () => {
   it.each([
     ["get_account_balance", () => getAccountBalance({}, runtime([]))],
     ["get_usage_summary", () => getUsageSummary({ max_items: 5 }, runtime([]))],
-  ])("fails closed before fetching when %s has no private registry", async (_tool, invoke) => {
-    const fetchSpy = vi.fn();
+  ])("calls %s without a private registry", async (_tool, invoke) => {
+    const fetchSpy = vi.fn(async () => Response.json({ code: 0, data: { value: "ok" } }));
     vi.stubGlobal("fetch", fetchSpy);
 
-    await expect(invoke()).rejects.toMatchObject({
-      payload: { code: "SECURITY_CONFIGURATION_REQUIRED" },
-    });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    await expect(invoke()).resolves.toMatchObject({ success: true });
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
-  it("blocks an unsafe balance response without echoing its internal identifier", async () => {
+  it("returns a previously blocked balance response unchanged", async () => {
+    const payload = { code: 0, data: { balance: "1.00", routeRef: "private-route" } };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        Response.json({ code: 0, data: { balance: "1.00", routeRef: "private-route" } })
-      )
+      vi.fn(async () => Response.json(payload))
     );
 
-    const rejection = (await getAccountBalance({}, runtime()).catch((error: unknown) => error)) as {
-      message?: string;
-      payload?: { code?: string };
-    };
-    expect(rejection).toMatchObject({ payload: { code: "UNSAFE_RESPONSE" } });
-    expect(rejection.message).not.toContain("routeRef");
+    await expect(getAccountBalance({}, runtime([]))).resolves.toMatchObject({
+      success: true,
+      data: payload.data,
+      raw: payload,
+    });
   });
 
-  it("scans the complete usage response before truncation", async () => {
+  it("passes a previously blocked usage response into the existing truncation logic", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -118,8 +114,11 @@ describe("account tools", () => {
       )
     );
 
-    await expect(getUsageSummary({ max_items: 1 }, runtime())).rejects.toMatchObject({
-      payload: { code: "UNSAFE_RESPONSE" },
-    });
+    const result = await getUsageSummary({ max_items: 1 }, runtime([]));
+
+    expect(result).toMatchObject({ success: true, truncated: true });
+    if (result.success) {
+      expect(result.data).toEqual({ rows: [{ label: "public" }] });
+    }
   });
 });

@@ -134,7 +134,7 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
   });
 
   it.each([
-    ["蒲公英曝光中位数", "xiaohongshu_pgy.api_pgy_kol_data_core_data_v1"],
+    ["蒲公英达人核心数据", "xiaohongshu_pgy.api_pgy_kol_data_core_data_v1"],
     ["抖音粉丝画像城市分布", "douyin_xingtu.gw_api_data_sp_get_author_fans_distribution_v1"],
   ])("resolves bilingual catalog query %s", (query, endpointId) => {
     expect(search(query).results[0]?.endpoint_id).toBe(endpointId);

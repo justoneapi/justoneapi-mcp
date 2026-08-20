@@ -120,22 +120,17 @@ Structured ranking is release-gated. It remains disabled unless the server opera
 `JUSTONEAPI_SEARCH_V2_ENABLED=true`; this lets catalog compatibility ship before the V2 ranking is
 enabled.
 
-Operators should inject registered private supplier names and domains through the secret
-`JUSTONEAPI_PRIVATE_CATALOG_TERMS` (JSON string array or comma/newline-separated values). The
-values are used only for fail-closed scanning and are never written into the catalog. Worker and
-package-release configurations require this secret to be non-empty; configure it before deploy or
-publish rather than placing the private registry in source control.
-
-Runtime endpoint and account calls do not depend on this registry and return upstream payloads
-through the normal truncation behavior. When the registry is unavailable, endpoint search and
-endpoint metadata inspection stay available from the release-scanned bundled catalog, while dynamic refresh,
-promotion, and rollback remain disabled. A trusted operator must inject the confidential registry
-before those catalog maintenance operations are enabled. The registry must never be placed in
-client configuration that will be shared publicly.
+Catalog builds and candidate promotions use built-in public-safety validation; no operator security
+registry or secret is required. Runtime endpoint and account calls return upstream payloads without
+MCP-layer response truncation.
 
 Catalog refreshes are staged as a candidate release, verified, and then promoted to `active` while
 retaining `previous`. An administrator can invoke `refresh_catalog` with `{ "rollback": true }` to
 swap back to the previous validated release.
+
+During the one-time V2-to-V3 pointer migration, the first V3 release has no V3 `previous` release;
+rollback becomes available after the next successful V3 promotion. The legacy V2 pointer remains
+untouched for older server versions during the rollout.
 
 ## call_endpoint
 
@@ -149,8 +144,7 @@ Input:
   "params": {
     "keyword": "美食",
     "page": 1
-  },
-  "max_items": 20
+  }
 }
 ```
 
@@ -160,7 +154,6 @@ Fields:
 | ------------- | -------- | -------------------------------------------------------------------- |
 | `endpoint_id` | Yes      | Endpoint id from `search_endpoints`.                                 |
 | `params`      | No       | Object keyed by schema `name`. Upstream `api_name` is also accepted. |
-| `max_items`   | No       | Maximum array items retained per array, default 20, max 100.         |
 
 Successful output:
 
@@ -182,23 +175,8 @@ Successful output:
 }
 ```
 
-Large arrays and long strings are truncated. When truncation happens, output contains:
-
-```json
-{
-  "truncated": true,
-  "truncation": {
-    "max_items": 20,
-    "paths": [
-      {
-        "path": "data.items",
-        "original_length": 100,
-        "kept": 20
-      }
-    ]
-  }
-}
-```
+The MCP layer preserves upstream array lengths, string values, and nesting depth. The
+`truncated` field remains `false` for backward compatibility.
 
 If pagination can be inferred, output contains:
 
@@ -240,19 +218,7 @@ Output includes:
 
 Review the current JustOneAPI token's recent API usage and spending trends.
 
-Input:
-
-```json
-{
-  "max_items": 100
-}
-```
-
-Fields:
-
-| Field       | Required | Description                                                   |
-| ----------- | -------- | ------------------------------------------------------------- |
-| `max_items` | No       | Maximum array items retained per array, default 100, max 100. |
+Input: none. Legacy clients may still send `max_items`; it is ignored.
 
 ## list_platforms
 

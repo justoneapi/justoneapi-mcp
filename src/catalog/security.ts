@@ -130,26 +130,6 @@ type PublicParameterCandidate = {
 
 type SafetyScanMode = "strict" | "catalog";
 
-type PreparedPrivateTerm = {
-  normalized: string;
-  tokens: string[];
-  compact: string;
-};
-
-type PrivateTermTrieNode = {
-  terminal: boolean;
-  children: Map<string, PrivateTermTrieNode>;
-};
-
-type PreparedPrivateTerms = {
-  termsByFirstToken: Map<string, PreparedPrivateTerm[]>;
-  compactTerms: Set<string>;
-  maxCompactLength: number;
-  nonAsciiTerms: string[];
-  prefixTrie: PrivateTermTrieNode;
-  suffixTrie: PrivateTermTrieNode;
-};
-
 const LEGACY_PUBLIC_PAGINATION_PARAMETER_KEYS = new Set([
   "name",
   "api_name",
@@ -238,12 +218,8 @@ const SENSITIVE_QUERY_KEY_COMPACT = new Set([
 const SENSITIVE_QUERY_KEY_COMPACT_RE =
   /^(?:x?api|access|secret|auth|refresh|bearer|session|credential|client)(?:key|token|secret|id)$/;
 
-export function assertSafePublicValue(
-  value: unknown,
-  context = "catalog",
-  privateTerms: readonly string[] = []
-): void {
-  visit(value, context, new Map<object, number>(), preparePrivateTerms(privateTerms), "strict");
+export function assertSafePublicValue(value: unknown, context = "catalog"): void {
+  visit(value, context, new Map<object, number>(), "strict");
 }
 
 /**
@@ -251,41 +227,8 @@ export function assertSafePublicValue(
  * legacy `cookies_buffer` pagination parameters. Generic public projections
  * remain strict through `assertSafePublicValue`.
  */
-export function assertSafeCatalogValue(
-  value: unknown,
-  context = "catalog",
-  privateTerms: readonly string[] = []
-): void {
-  visit(value, context, new Map<object, number>(), preparePrivateTerms(privateTerms), "catalog");
-}
-
-export function parsePrivateCatalogTerms(value: string | undefined): string[] {
-  if (!value?.trim()) return [];
-  const trimmed = value.trim();
-  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed) as unknown;
-    } catch {
-      throw new Error("Private catalog term registry JSON is invalid");
-    }
-    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string" || !item.trim())) {
-      throw new Error("Private catalog term registry JSON must be a non-blank string array");
-    }
-    return normalizePrivateTerms(parsed as string[]);
-  }
-  return normalizePrivateTerms(trimmed.split(/[,\n]/));
-}
-
-export function configuredPrivateCatalogTerms(
-  value: string | undefined,
-  required: string | undefined
-): string[] {
-  const terms = parsePrivateCatalogTerms(value);
-  if ((required ?? "").toLowerCase() === "true" && terms.length === 0) {
-    throw new Error("Private catalog term registry is required but was not configured");
-  }
-  return terms;
+export function assertSafeCatalogValue(value: unknown, context = "catalog"): void {
+  visit(value, context, new Map<object, number>(), "catalog");
 }
 
 export function isCredentialParameterName(value: string): boolean {
@@ -387,12 +330,11 @@ function visit(
   value: unknown,
   path: string,
   seen: Map<object, number>,
-  privateTerms: PreparedPrivateTerms,
   mode: SafetyScanMode,
   allowedCredentialParameter = false
 ): void {
   if (typeof value === "string") {
-    assertSafeText(value, path, privateTerms, mode);
+    assertSafeText(value, path, mode);
     return;
   }
   if (!value || typeof value !== "object") return;
@@ -405,7 +347,7 @@ function visit(
   seen.set(value, visited | visitBit);
 
   if (Array.isArray(value)) {
-    value.forEach((item, index) => visit(item, `${path}[${index}]`, seen, privateTerms, mode));
+    value.forEach((item, index) => visit(item, `${path}[${index}]`, seen, mode));
     return;
   }
 
@@ -430,15 +372,15 @@ function visit(
     if (isForbiddenPublicKey(key)) {
       throw new Error(`Unsafe public catalog key at ${path}`);
     }
-    assertSafeText(key, `${path} key`, privateTerms, mode);
+    assertSafeText(key, `${path} key`, mode);
     if (key === "params" && operation && Array.isArray(child)) {
       child.forEach((item, index) => {
         const allowed = isRecord(item) && isAllowedLegacyPaginationParameter(operation, item);
-        visit(item, `${path}.${key}[${index}]`, seen, privateTerms, mode, allowed);
+        visit(item, `${path}.${key}[${index}]`, seen, mode, allowed);
       });
       continue;
     }
-    visit(child, `${path}.${key}`, seen, privateTerms, mode);
+    visit(child, `${path}.${key}`, seen, mode);
   }
 }
 
@@ -468,15 +410,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function assertSafeText(
   value: string,
   path: string,
-  privateTerms: PreparedPrivateTerms,
   mode: SafetyScanMode,
   nestedUrlDepth = 0
 ): void {
-  assertSafeDecodedComponent(value, path, privateTerms);
+  assertSafeDecodedComponent(value, path);
   const urlListSegments = value.split(URL_LIST_SEPARATOR_RE);
   if (urlListSegments.length > 1) {
     for (const [index, segment] of urlListSegments.entries()) {
-      assertSafeText(segment, `${path} URL list item ${index}`, privateTerms, mode, nestedUrlDepth);
+      assertSafeText(segment, `${path} URL list item ${index}`, mode, nestedUrlDepth);
     }
     return;
   }
@@ -505,7 +446,7 @@ function assertSafeText(
     }
 
     const host = normalizeHostname(decodeUrlComponent(url.hostname, path));
-    assertSafeDecodedComponent(host, `${path} URL host`, privateTerms);
+    assertSafeDecodedComponent(host, `${path} URL host`);
     if (
       isPrivateHost(host) ||
       !PUBLIC_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))
@@ -518,35 +459,23 @@ function assertSafeText(
 
     const decodedPath = decodeUrlComponent(url.pathname, path);
     const decodedHash = decodeUrlComponent(url.hash, path);
-    assertSafeDecodedComponent(decodedPath, `${path} URL path`, privateTerms);
-    assertSafeDecodedComponent(decodedHash, `${path} URL fragment`, privateTerms);
-    assertSafeNestedUrlComponent(
-      decodedPath,
-      `${path} URL path`,
-      privateTerms,
-      mode,
-      nestedUrlDepth
-    );
-    assertSafeNestedUrlComponent(
-      decodedHash,
-      `${path} URL fragment`,
-      privateTerms,
-      mode,
-      nestedUrlDepth
-    );
+    assertSafeDecodedComponent(decodedPath, `${path} URL path`);
+    assertSafeDecodedComponent(decodedHash, `${path} URL fragment`);
+    assertSafeNestedUrlComponent(decodedPath, `${path} URL path`, mode, nestedUrlDepth);
+    assertSafeNestedUrlComponent(decodedHash, `${path} URL fragment`, mode, nestedUrlDepth);
 
     for (const [rawKey, rawValue] of url.searchParams.entries()) {
       const key = decodeUrlComponent(rawKey, path);
-      assertSafeDecodedComponent(key, `${path} query key`, privateTerms);
+      assertSafeDecodedComponent(key, `${path} query key`);
       if (isSensitiveQueryKey(key)) {
         throw new Error(`Credential-bearing URL in public catalog at ${path}`);
       }
       const decodedValue = decodeUrlComponent(rawValue, path);
-      assertSafeDecodedComponent(decodedValue, `${path} query value`, privateTerms);
+      assertSafeDecodedComponent(decodedValue, `${path} query value`);
       if (nestedUrlDepth >= 3 && /[a-z][a-z0-9+.-]*:\/\//i.test(decodedValue)) {
         throw new Error(`Nested URL value in public catalog at ${path}`);
       }
-      assertSafeText(decodedValue, `${path} query value`, privateTerms, mode, nestedUrlDepth + 1);
+      assertSafeText(decodedValue, `${path} query value`, mode, nestedUrlDepth + 1);
     }
   }
 
@@ -576,23 +505,13 @@ function assertSafeText(
   SCHEME_RELATIVE_URL_RE.lastIndex = 0;
 }
 
-function assertSafeDecodedComponent(
-  value: string,
-  path: string,
-  privateTerms: PreparedPrivateTerms
-): void {
+function assertSafeDecodedComponent(value: string, path: string): void {
   const textTokens = identifierTokens(value);
   if (
     FORBIDDEN_TEXT.some((pattern) => pattern.test(value)) ||
     FORBIDDEN_TEXT_TOKEN_SEQUENCES.some((sequence) => hasTokenSequence(textTokens, sequence))
   ) {
     throw new Error(`Unsafe internal wording in public catalog at ${path}`);
-  }
-  const normalizedValue = privateTerms.nonAsciiTerms.length
-    ? value.normalize("NFKC").toLocaleLowerCase("en-US")
-    : "";
-  if (containsPrivateTerm(normalizedValue, textTokens, privateTerms)) {
-    throw new Error(`Registered private term in public catalog at ${path}`);
   }
   for (const match of value.matchAll(EMBEDDED_ABSOLUTE_SCHEME_RE)) {
     const scheme = match[1].toLowerCase();
@@ -606,7 +525,6 @@ function assertSafeDecodedComponent(
 function assertSafeNestedUrlComponent(
   value: string,
   path: string,
-  privateTerms: PreparedPrivateTerms,
   mode: SafetyScanMode,
   nestedUrlDepth: number
 ): void {
@@ -614,42 +532,7 @@ function assertSafeNestedUrlComponent(
   if (nestedUrlDepth >= 3) {
     throw new Error(`Nested URL value in public catalog at ${path}`);
   }
-  assertSafeText(value, path, privateTerms, mode, nestedUrlDepth + 1);
-}
-
-function containsPrivateTerm(
-  normalizedValue: string,
-  valueTokens: string[],
-  terms: PreparedPrivateTerms
-): boolean {
-  if (terms.nonAsciiTerms.some((term) => normalizedValue.includes(term))) return true;
-
-  for (let index = 0; index < valueTokens.length; index += 1) {
-    const candidates = terms.termsByFirstToken.get(valueTokens[index]) ?? [];
-    if (
-      candidates.some(
-        (term) =>
-          index + term.tokens.length <= valueTokens.length &&
-          term.tokens.every((token, offset) => valueTokens[index + offset] === token)
-      )
-    ) {
-      return true;
-    }
-  }
-
-  for (let start = 0; start < valueTokens.length; start += 1) {
-    let compactValue = "";
-    for (let end = start; end < valueTokens.length; end += 1) {
-      compactValue += valueTokens[end];
-      if (compactValue.length > terms.maxCompactLength) break;
-      if (terms.compactTerms.has(compactValue)) return true;
-    }
-  }
-  return valueTokens.some(
-    (token) =>
-      matchesPrivateTermTrie(token, terms.prefixTrie, false) ||
-      matchesPrivateTermTrie(token, terms.suffixTrie, true)
-  );
+  assertSafeText(value, path, mode, nestedUrlDepth + 1);
 }
 
 function isForbiddenPublicKey(key: string): boolean {
@@ -774,105 +657,6 @@ function isSensitiveQueryKey(value: string): boolean {
     SENSITIVE_QUERY_KEY_COMPACT_RE.test(compact) ||
     identifierTokens(value).some((token) => SENSITIVE_QUERY_KEY_TOKENS.has(token))
   );
-}
-
-function normalizePrivateTerms(values: readonly string[]): string[] {
-  const normalized = new Set<string>();
-  for (const value of values) {
-    const term = value.trim().normalize("NFKC").toLocaleLowerCase("en-US");
-    if (!term) continue;
-    normalized.add(term);
-    try {
-      if (/^https?:\/\//i.test(term)) {
-        const url = new URL(term);
-        if (url.protocol === "http:" || url.protocol === "https:") {
-          const host = normalizeHostname(url.hostname);
-          if (host) normalized.add(host);
-        }
-        continue;
-      }
-      if (/[\s/:@?#\[\]]/.test(term)) continue;
-      // URL applies the same IDNA/punycode host canonicalization used by the
-      // catalog scanner. Keeping both forms makes a Unicode registry entry and
-      // an xn-- catalog host (or the reverse) equivalent.
-      const host = normalizeHostname(new URL(`https://${term}/`).hostname);
-      if (host) normalized.add(host);
-    } catch {
-      // Non-domain private identifiers remain protected by their text form.
-    }
-  }
-  return [...normalized];
-}
-
-function preparePrivateTerms(values: readonly string[]): PreparedPrivateTerms {
-  const termsByFirstToken = new Map<string, PreparedPrivateTerm[]>();
-  const compactTerms = new Set<string>();
-  const nonAsciiTerms: string[] = [];
-  const prefixTrie = newPrivateTermTrieNode();
-  const suffixTrie = newPrivateTermTrieNode();
-  let maxCompactLength = 0;
-
-  for (const normalized of normalizePrivateTerms(values)) {
-    const tokens = identifierTokens(normalized);
-    const compact = tokens.join("");
-    const term = { normalized, tokens, compact };
-    if (tokens.length) {
-      const first = tokens[0];
-      termsByFirstToken.set(first, [...(termsByFirstToken.get(first) ?? []), term]);
-    }
-    if (compact) {
-      compactTerms.add(compact);
-      maxCompactLength = Math.max(maxCompactLength, compact.length);
-      if (compact.length >= 6) {
-        addPrivateTermToTrie(prefixTrie, compact, false);
-        addPrivateTermToTrie(suffixTrie, compact, true);
-      }
-    }
-    if (/[^\x00-\x7f]/.test(normalized)) nonAsciiTerms.push(normalized);
-  }
-
-  return {
-    termsByFirstToken,
-    compactTerms,
-    maxCompactLength,
-    nonAsciiTerms,
-    prefixTrie,
-    suffixTrie,
-  };
-}
-
-function newPrivateTermTrieNode(): PrivateTermTrieNode {
-  return { terminal: false, children: new Map() };
-}
-
-function addPrivateTermToTrie(root: PrivateTermTrieNode, value: string, reverse: boolean): void {
-  let node = root;
-  const characters = reverse ? [...value].reverse() : [...value];
-  for (const character of characters) {
-    let child = node.children.get(character);
-    if (!child) {
-      child = newPrivateTermTrieNode();
-      node.children.set(character, child);
-    }
-    node = child;
-  }
-  node.terminal = true;
-}
-
-function matchesPrivateTermTrie(
-  value: string,
-  root: PrivateTermTrieNode,
-  reverse: boolean
-): boolean {
-  let node = root;
-  const characters = reverse ? [...value].reverse() : [...value];
-  for (const character of characters) {
-    const child = node.children.get(character);
-    if (!child) return false;
-    if (child.terminal) return true;
-    node = child;
-  }
-  return false;
 }
 
 function isPrivateHost(host: string): boolean {

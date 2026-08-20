@@ -5,10 +5,10 @@ import { CatalogBundle } from "../src/catalog/types.js";
 import { KvCatalogStore } from "../src/worker/kvCatalogStore.js";
 
 const BUNDLE_KEY = "catalog:bundle";
-const POINTERS_KEY = "catalog:pointers";
+const POINTERS_KEY = "catalog:pointers:v3";
+const LEGACY_POINTERS_KEY = "catalog:pointers";
 const RELEASE_PREFIX = "catalog:release:";
-const PRIVATE_TERMS = ["private-registry-canary"];
-const SAFETY = catalogSafetyContext(PRIVATE_TERMS);
+const SAFETY = catalogSafetyContext();
 
 class MemoryKv {
   private readonly values = new Map<string, string>();
@@ -65,12 +65,11 @@ function bundle(summary: string, generatedAt: string): CatalogBundle {
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
     openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
     generatedAt,
-    forbiddenTerms: PRIVATE_TERMS,
   });
 }
 
-describe("KV catalog V2 release attestations", () => {
-  it("does not treat legacy bundles or V1 pointers as promoted releases", async () => {
+describe("KV catalog V3 release attestations", () => {
+  it("keeps obsolete pointers isolated while promoting a V3 release", async () => {
     const memory = new MemoryKv();
     const store = new KvCatalogStore(memory.namespace);
     const legacy = bundle("Legacy title", "2026-07-14T00:00:00.000Z");
@@ -79,8 +78,23 @@ describe("KV catalog V2 release attestations", () => {
     await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
 
     memory.putJson(`${RELEASE_PREFIX}${legacy.meta.release_id}`, legacy);
-    memory.putJson(POINTERS_KEY, { active: legacy.meta.release_id });
+    const legacyPointers = {
+      schema_version: 2,
+      active: { release_id: legacy.meta.release_id },
+    };
+    memory.putJson(LEGACY_POINTERS_KEY, legacyPointers);
     await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
+
+    await store.saveCandidate(legacy);
+    await store.promoteCandidate(catalogReleaseAttestation(legacy));
+    expect(memory.getJson(LEGACY_POINTERS_KEY)).toEqual(legacyPointers);
+    expect((await store.loadPromoted(SAFETY))?.meta.release_id).toBe(legacy.meta.release_id);
+
+    memory.putJson(LEGACY_POINTERS_KEY, {
+      schema_version: 2,
+      active: { release_id: "catalog-written-by-old-isolate" },
+    });
+    expect((await store.loadPromoted(SAFETY))?.meta.release_id).toBe(legacy.meta.release_id);
   });
 
   it("promotes two attested releases and rolls back to the previous release", async () => {
@@ -90,18 +104,38 @@ describe("KV catalog V2 release attestations", () => {
     const second = bundle("Second title", "2026-07-15T00:00:00.000Z");
 
     await store.saveCandidate(first);
-    await store.promoteCandidate(catalogReleaseAttestation(first, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(first));
     await expect(store.loadPrevious(SAFETY)).resolves.toBeNull();
 
     await store.saveCandidate(second);
-    await store.promoteCandidate(catalogReleaseAttestation(second, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(second));
     expect((await store.loadPromoted(SAFETY))?.meta.release_id).toBe(second.meta.release_id);
     expect((await store.loadPrevious(SAFETY))?.meta.release_id).toBe(first.meta.release_id);
+    expect(
+      memory.getJson<{ schema_version: number; active: Record<string, unknown> }>(POINTERS_KEY)
+    ).toMatchObject({ schema_version: 3 });
+    expect(
+      Object.keys(
+        memory.getJson<{ active: Record<string, unknown> }>(POINTERS_KEY)?.active ?? {}
+      ).sort()
+    ).toEqual(["content_sha256", "release_id", "safety_policy_version"]);
 
     const rolledBack = await store.rollback(SAFETY);
     expect(rolledBack?.meta.release_id).toBe(first.meta.release_id);
     expect((await store.loadPromoted(SAFETY))?.meta.release_id).toBe(first.meta.release_id);
     expect((await store.loadPrevious(SAFETY))?.meta.release_id).toBe(second.meta.release_id);
+  });
+
+  it("rejects a promoted release from a different safety policy", async () => {
+    const memory = new MemoryKv();
+    const store = new KvCatalogStore(memory.namespace);
+    const active = bundle("Active title", "2026-07-14T00:00:00.000Z");
+    await store.saveCandidate(active);
+    await store.promoteCandidate(catalogReleaseAttestation(active));
+
+    await expect(store.loadPromoted({ safety_policy_version: "obsolete-policy" })).rejects.toThrow(
+      "Catalog safety policy revision mismatch"
+    );
   });
 
   it("rejects active payload tampering even when release ID and endpoint count are unchanged", async () => {
@@ -110,7 +144,7 @@ describe("KV catalog V2 release attestations", () => {
     const active = bundle("Active title", "2026-07-14T00:00:00.000Z");
 
     await store.saveCandidate(active);
-    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(active));
 
     const changed = structuredClone(active);
     changed.catalog.endpoints[0].description_en = "Changed after promotion.";
@@ -130,9 +164,9 @@ describe("KV catalog V2 release attestations", () => {
     const second = bundle("Second title", "2026-07-15T00:00:00.000Z");
 
     await store.saveCandidate(first);
-    await store.promoteCandidate(catalogReleaseAttestation(first, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(first));
     await store.saveCandidate(second);
-    await store.promoteCandidate(catalogReleaseAttestation(second, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(second));
     const pointersBefore = memory.getJson<unknown>(POINTERS_KEY);
 
     const damagedPrevious = structuredClone(first);
@@ -152,7 +186,7 @@ describe("KV catalog V2 release attestations", () => {
     const active = bundle("Active title", "2026-07-14T00:00:00.000Z");
 
     await store.saveCandidate(active);
-    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(active));
 
     const conflicting = structuredClone(active);
     conflicting.catalog.endpoints[0].description_en = "Conflicting content.";
@@ -171,14 +205,14 @@ describe("KV catalog V2 release attestations", () => {
     const first = bundle("First title", "2026-07-14T00:00:00.000Z");
     const second = bundle("Second title", "2026-07-15T00:00:00.000Z");
     await store.saveCandidate(first);
-    await store.promoteCandidate(catalogReleaseAttestation(first, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(first));
     await store.saveCandidate(second);
     const pointersBefore = memory.getJson<unknown>(POINTERS_KEY);
     memory.failPutsFor(BUNDLE_KEY);
 
-    await expect(
-      store.promoteCandidate(catalogReleaseAttestation(second, PRIVATE_TERMS))
-    ).rejects.toThrow("simulated KV put failure");
+    await expect(store.promoteCandidate(catalogReleaseAttestation(second))).rejects.toThrow(
+      "simulated KV put failure"
+    );
     expect(memory.getJson<unknown>(POINTERS_KEY)).toEqual(pointersBefore);
     expect((await store.loadPromoted(SAFETY))?.meta.release_id).toBe(first.meta.release_id);
   });
@@ -189,9 +223,9 @@ describe("KV catalog V2 release attestations", () => {
     const first = bundle("First title", "2026-07-14T00:00:00.000Z");
     const second = bundle("Second title", "2026-07-15T00:00:00.000Z");
     await store.saveCandidate(first);
-    await store.promoteCandidate(catalogReleaseAttestation(first, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(first));
     await store.saveCandidate(second);
-    await store.promoteCandidate(catalogReleaseAttestation(second, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(second));
     const pointersBefore = memory.getJson<unknown>(POINTERS_KEY);
     memory.failPutsFor(BUNDLE_KEY);
 

@@ -10,12 +10,10 @@ import {
 import { inferNextStep } from "../common/pagination.js";
 import { RuntimeContext } from "../common/runtime.js";
 import { tokenHash } from "../common/auth.js";
-import { truncateJson } from "../common/truncate.js";
 
 export const CallEndpointInput = z.object({
   endpoint_id: z.string().min(1),
   params: z.record(z.string(), z.unknown()).default({}).optional(),
-  max_items: z.number().int().min(1).max(100).default(20).optional(),
 });
 
 type UpstreamPayload = {
@@ -45,12 +43,6 @@ export async function callEndpoint(input: z.infer<typeof CallEndpointInput>, ctx
   const upstreamCode = Number(payload.code);
   const isSuccess = upstreamCode === 0;
 
-  const truncated = truncateJson(payload, {
-    maxItems: input.max_items ?? 20,
-    maxTextLength: 4000,
-    maxDepth: 8,
-  });
-  const raw = truncated.value as UpstreamPayload;
   const nextStep = inferNextStep(endpoint, normalized.normalizedParams, payload);
   const hash = await tokenHash(token);
 
@@ -62,7 +54,7 @@ export async function callEndpoint(input: z.infer<typeof CallEndpointInput>, ctx
     success: isSuccess,
     code: payload.code,
     duration_ms: Date.now() - started,
-    truncated: truncated.truncated,
+    truncated: false,
     param_keys: Object.keys(normalized.normalizedParams),
   });
 
@@ -86,15 +78,9 @@ export async function callEndpoint(input: z.infer<typeof CallEndpointInput>, ctx
     endpoint_id: endpoint.endpoint_id,
     code: payload.code,
     message: payload.message ?? null,
-    data: raw.data,
-    raw,
-    truncated: truncated.truncated,
-    truncation: truncated.truncated
-      ? {
-          max_items: input.max_items ?? 20,
-          paths: truncated.paths,
-        }
-      : undefined,
+    data: payload.data,
+    raw: payload,
+    truncated: false,
     next_step: nextStep,
     warnings: normalized.warnings,
   };

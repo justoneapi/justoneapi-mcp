@@ -110,7 +110,6 @@ export type CatalogMeta = {
 };
 
 export type CatalogSafetyContext = {
-  registry_revision: string;
   safety_policy_version: string;
 };
 

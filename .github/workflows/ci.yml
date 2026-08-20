@@ -24,8 +24,6 @@ jobs:
 
       - name: Verify bundled catalog release
         run: npm run verify:catalog
-        env:
-          JUSTONEAPI_PRIVATE_CATALOG_TERMS: ${{ secrets.JUSTONEAPI_PRIVATE_CATALOG_TERMS }}
 
       - name: Lint
         run: npm run lint

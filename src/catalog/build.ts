@@ -98,12 +98,11 @@ export type BuildCatalogOptions = {
   openapiText: string;
   openapiZhText?: string | null;
   generatedAt?: string;
-  forbiddenTerms?: string[];
   requireLocalizedReleaseId?: boolean;
 };
 
 const VERSION_RE = /^v\d+$/i;
-export const CATALOG_GENERATOR_VERSION = "5";
+export const CATALOG_GENERATOR_VERSION = "6";
 
 export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -144,8 +143,7 @@ export function buildCatalogBundle(options: BuildCatalogOptions): CatalogBundle 
           platformMetadata.get(parsed.platform) ??
             operation.tags
               ?.map((tag) => platformMetadata.get(`tag:${tag.toLowerCase()}`))
-              .find((metadata): metadata is PlatformMetadata => Boolean(metadata)),
-          options.forbiddenTerms
+              .find((metadata): metadata is PlatformMetadata => Boolean(metadata))
         )
       );
     }
@@ -155,9 +153,7 @@ export function buildCatalogBundle(options: BuildCatalogOptions): CatalogBundle 
   assertUniqueEndpointIds(endpoints);
   assertUniqueRecommendedVersions(endpoints);
   const semanticHash = sha256(JSON.stringify(endpoints));
-  const security = options.forbiddenTerms?.length
-    ? catalogSafetyContext(options.forbiddenTerms)
-    : undefined;
+  const security = catalogSafetyContext();
   const bundle: CatalogBundle = {
     catalog: { endpoints },
     meta: {
@@ -175,7 +171,7 @@ export function buildCatalogBundle(options: BuildCatalogOptions): CatalogBundle 
       },
     },
   };
-  assertSafeCatalogValue(bundle, "catalog bundle", options.forbiddenTerms);
+  assertSafeCatalogValue(bundle, "catalog bundle");
   return bundle;
 }
 
@@ -279,8 +275,7 @@ function buildEndpoint(
   parsed: { platform: string; methodName: string; version: string },
   operation: OpenApiOperation,
   zhOperation: OpenApiOperation | undefined,
-  platformMetadata?: PlatformMetadata,
-  forbiddenTerms: string[] = []
+  platformMetadata?: PlatformMetadata
 ): EndpointCatalogEntry {
   const params = buildParams(path, method, operation, zhOperation);
   const highlightsEn = normalizeHighlights(operation["x-highlights"]);
@@ -330,10 +325,7 @@ function buildEndpoint(
   };
   endpoint.search_tokens = buildSearchTokens(endpoint);
   endpoint.pagination = inferPagination(params);
-  // Keep the diagnostic context static: the value being rejected can itself
-  // contain a registered private identifier and must never be echoed by an
-  // exception returned from catalog generation.
-  assertSafeCatalogValue(endpoint, "public endpoint", forbiddenTerms);
+  assertSafeCatalogValue(endpoint, "public endpoint");
   return endpoint;
 }
 

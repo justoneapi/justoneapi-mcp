@@ -19,11 +19,12 @@ import {
 const BUNDLE_FILE = "catalog-bundle.json";
 const LAST_REFRESH_FILE = "catalog-last-refresh.json";
 const LOCK_FILE = "catalog-refresh-lock.json";
-const POINTERS_FILE = "catalog-pointers.json";
+const POINTERS_FILE = "catalog-pointers-v3.json";
+const LEGACY_POINTERS_FILE = "catalog-pointers.json";
 const RELEASES_DIR = "catalog-releases";
-const POINTER_SCHEMA_VERSION = 2;
+const POINTER_SCHEMA_VERSION = 3;
 
-type CatalogPointersV2 = {
+type CatalogPointersV3 = {
   schema_version: typeof POINTER_SCHEMA_VERSION;
   active?: CatalogReleaseAttestation;
   previous?: CatalogReleaseAttestation;
@@ -42,25 +43,28 @@ export class FileCatalogStore implements CatalogStore {
   }
 
   async loadPromoted(safety: CatalogSafetyContext): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     return pointers?.active ? await this.readAttestedRelease(pointers.active, safety) : null;
   }
 
   async loadActive(): Promise<CatalogBundle | null> {
     const raw = await this.readJson<Record<string, unknown>>(POINTERS_FILE);
-    const releaseId = activeReleaseId(raw);
+    const legacyRaw = raw
+      ? null
+      : await this.readJson<Record<string, unknown>>(LEGACY_POINTERS_FILE);
+    const releaseId = activeReleaseId(raw) ?? activeReleaseId(legacyRaw);
     return releaseId
       ? await this.readRelease(releaseId)
       : await this.readJson<CatalogBundle>(BUNDLE_FILE);
   }
 
   async loadPrevious(safety: CatalogSafetyContext): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     return pointers?.previous ? await this.readAttestedRelease(pointers.previous, safety) : null;
   }
 
   async loadCandidate(): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     return pointers?.candidate ? await this.readRelease(pointers.candidate) : null;
   }
 
@@ -71,13 +75,13 @@ export class FileCatalogStore implements CatalogStore {
       throw new Error("Catalog release ID already exists with different content");
     }
     if (!existing) await this.writeRelease(releaseId, bundle);
-    const pointers = (await this.readPointersV2()) ?? freshPointers();
+    const pointers = (await this.readPointers()) ?? freshPointers();
     await this.writeJson(POINTERS_FILE, { ...pointers, candidate: releaseId });
   }
 
   async promoteCandidate(attestation: CatalogReleaseAttestation): Promise<void> {
     assertCatalogReleaseAttestation(attestation);
-    const pointers = (await this.readPointersV2()) ?? freshPointers();
+    const pointers = (await this.readPointers()) ?? freshPointers();
     if (pointers.candidate !== attestation.release_id) {
       throw new Error("Catalog candidate release mismatch");
     }
@@ -90,7 +94,7 @@ export class FileCatalogStore implements CatalogStore {
     }
 
     // Older processes read only the legacy bundle. Write the already scanned
-    // candidate there before switching V2 so a code rollback cannot reactivate
+    // candidate there before switching the V3 pointer so a code rollback cannot reactivate
     // a stale, unverified catalog.
     await this.writeJson(BUNDLE_FILE, candidate);
     await this.writeJson(POINTERS_FILE, {
@@ -104,7 +108,7 @@ export class FileCatalogStore implements CatalogStore {
   }
 
   async rollback(safety: CatalogSafetyContext): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     if (!pointers?.active || !pointers.previous) return null;
     await this.readAttestedRelease(pointers.active, safety);
     const previous = await this.readAttestedRelease(pointers.previous, safety);
@@ -154,10 +158,10 @@ export class FileCatalogStore implements CatalogStore {
     await rename(tmp, target);
   }
 
-  private async readPointersV2(): Promise<CatalogPointersV2 | null> {
+  private async readPointers(): Promise<CatalogPointersV3 | null> {
     const value = await this.readJson<unknown>(POINTERS_FILE);
     if (!isRecord(value) || value.schema_version !== POINTER_SCHEMA_VERSION) return null;
-    const pointers: CatalogPointersV2 = { schema_version: POINTER_SCHEMA_VERSION };
+    const pointers: CatalogPointersV3 = { schema_version: POINTER_SCHEMA_VERSION };
     if (value.active !== undefined) pointers.active = parseAttestation(value.active);
     if (value.previous !== undefined) pointers.previous = parseAttestation(value.previous);
     if (value.candidate !== undefined) {
@@ -201,7 +205,7 @@ export class FileCatalogStore implements CatalogStore {
   }
 }
 
-function freshPointers(): CatalogPointersV2 {
+function freshPointers(): CatalogPointersV3 {
   return { schema_version: POINTER_SCHEMA_VERSION };
 }
 
@@ -217,7 +221,6 @@ function parseAttestation(value: unknown): CatalogReleaseAttestation {
     !isRecord(value) ||
     typeof value.release_id !== "string" ||
     typeof value.content_sha256 !== "string" ||
-    typeof value.registry_revision !== "string" ||
     typeof value.safety_policy_version !== "string"
   ) {
     throw new Error("Invalid catalog release attestation");
@@ -225,7 +228,6 @@ function parseAttestation(value: unknown): CatalogReleaseAttestation {
   const attestation: CatalogReleaseAttestation = {
     release_id: value.release_id,
     content_sha256: value.content_sha256,
-    registry_revision: value.registry_revision,
     safety_policy_version: value.safety_policy_version,
   };
   assertCatalogReleaseAttestation(attestation);

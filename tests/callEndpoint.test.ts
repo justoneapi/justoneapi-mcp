@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CatalogManager } from "../src/catalog/manager.js";
+import { catalogSafetyContext } from "../src/catalog/release.js";
 import { CatalogBundle, CatalogStore } from "../src/catalog/types.js";
 import { callEndpoint } from "../src/tools/callEndpoint.js";
 import { RuntimeContext } from "../src/common/runtime.js";
@@ -7,6 +8,8 @@ import { silentLogger } from "../src/common/logger.js";
 
 const bundle: CatalogBundle = {
   meta: {
+    release_id: "call-endpoint-test",
+    generator_version: "6",
     generated_at: "2026-06-23T00:00:00.000Z",
     endpoint_count: 1,
     localization_available: true,
@@ -16,6 +19,7 @@ const bundle: CatalogBundle = {
       openapi_sha256: "a",
       openapi_zh_sha256: "b",
     },
+    security: catalogSafetyContext(),
   },
   catalog: {
     endpoints: [
@@ -123,10 +127,7 @@ class MemoryStore implements CatalogStore {
   }
 }
 
-function runtime(
-  privateCatalogTerms: string[] = ["private-registry-canary"],
-  activeBundle: CatalogBundle = bundle
-): RuntimeContext {
+function runtime(activeBundle: CatalogBundle = bundle): RuntimeContext {
   return {
     transport: "stdio",
     config: {
@@ -137,7 +138,6 @@ function runtime(
       catalogMemoryTtlMs: 60000,
       debug: false,
       searchV2Enabled: false,
-      privateCatalogTerms,
       timeoutMs: 1000,
       retry: 0,
     },
@@ -149,7 +149,6 @@ function runtime(
       catalogMemoryTtlMs: 60000,
       debug: false,
       searchV2Enabled: false,
-      privateCatalogTerms: [],
       timeoutMs: 1000,
       retry: 0,
     }),
@@ -164,7 +163,7 @@ describe("callEndpoint", () => {
     vi.unstubAllGlobals();
   });
 
-  it("calls the endpoint without a private runtime registry and returns the payload unchanged", async () => {
+  it("returns the upstream payload unchanged without catalog security configuration", async () => {
     const payload = {
       code: 0,
       message: null,
@@ -178,15 +177,16 @@ describe("callEndpoint", () => {
         endpoint_id: "kuaishou.search_video_v2",
         params: { keyword: "美食" },
       },
-      runtime([])
+      runtime()
     );
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ success: true, data: payload.data, raw: payload });
   });
 
-  it("maps params, truncates large arrays, and returns next_step", async () => {
+  it("maps params, preserves complete arrays, and returns next_step", async () => {
     let seenUrl = "";
+    const items = Array.from({ length: 125 }, (_, id) => ({ id }));
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: URL | RequestInfo) => {
@@ -195,7 +195,7 @@ describe("callEndpoint", () => {
           code: 0,
           message: null,
           data: {
-            items: Array.from({ length: 25 }, (_, id) => ({ id })),
+            items,
             nextCursor: "cursor-1",
           },
         });
@@ -206,7 +206,6 @@ describe("callEndpoint", () => {
       {
         endpoint_id: "kuaishou.search_video_v2",
         params: { keyword: "美食", page: "2", extra: "ignored" },
-        max_items: 20,
       },
       runtime()
     );
@@ -216,14 +215,66 @@ describe("callEndpoint", () => {
     expect(seenUrl).toContain("page=2");
     expect(result.success).toBe(true);
     if (result.success) {
-      expect((result.data as { items: unknown[] }).items).toHaveLength(20);
-      expect(result.truncated).toBe(true);
+      expect((result.data as { items: unknown[] }).items).toEqual(items);
+      expect(result.truncated).toBe(false);
       expect(result.next_step?.params).toMatchObject({
         keyword: "美食",
         page: 3,
         next_cursor: "cursor-1",
       });
       expect(result.warnings).toContain("Ignored unknown parameter: extra.");
+    }
+  });
+
+  it("preserves deeply nested Xianyu fields and long strings without truncation", async () => {
+    const longTitle = "闲".repeat(4001);
+    const payload = {
+      code: 0,
+      message: null,
+      data: {
+        api: "mtop.taobao.idle.web.item.search",
+        data: {
+          resultInfo: { hasNextPage: false },
+          topList: [],
+          resultList: [
+            {
+              data: {
+                item: {
+                  main: {
+                    exContent: {
+                      itemId: "123456789",
+                      title: longTitle,
+                      price: [{ text: "299.00" }],
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(payload))
+    );
+
+    const result = await callEndpoint(
+      {
+        endpoint_id: "kuaishou.search_video_v2",
+        params: { keyword: "相机" },
+      },
+      runtime()
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual(payload.data);
+      expect(result.raw).toEqual(payload);
+      expect(result.truncated).toBe(false);
+      expect(result).not.toHaveProperty("truncation");
+      expect(JSON.stringify(result)).not.toContain("[Truncated: max depth exceeded]");
+      expect(JSON.stringify(result)).not.toContain("...[truncated]");
     }
   });
 
@@ -310,7 +361,7 @@ describe("callEndpoint", () => {
           endpoint_id: "weixin.search_article_v1",
           params: { keyword: "news", cookies_buffer: "previous-page" },
         },
-        runtime(["private-registry-canary"], legacyPaginationBundle)
+        runtime(legacyPaginationBundle)
       );
 
       expect(result.success).toBe(true);
@@ -336,8 +387,8 @@ describe("callEndpoint", () => {
       { code: 0, data: { cookies: { cookies_buffer: "sk-proj-abcdefghijklmnopqrstuv" } } },
     ],
     [
-      "private term state",
-      { code: 0, data: { cookies: { cookies_buffer: "private-registry-canary" } } },
+      "opaque state canary",
+      { code: 0, data: { cookies: { cookies_buffer: "legacy-state-canary" } } },
     ],
     [
       "private URL state",
@@ -351,7 +402,7 @@ describe("callEndpoint", () => {
     );
     const result = await callEndpoint(
       { endpoint_id: "weixin.search_article_v1", params: { keyword: "news" } },
-      runtime([], legacyPaginationBundle)
+      runtime(legacyPaginationBundle)
     );
 
     expect(result.success).toBe(payload.code === 0);
@@ -359,91 +410,61 @@ describe("callEndpoint", () => {
   });
 
   it.each([
-    ["internal key", { code: 0, data: { routeRef: "route-1" } }, []],
+    ["internal key", { code: 0, data: { routeRef: "route-1" } }],
     [
       "legacy pagination response on another endpoint",
       { code: 0, data: { cookies: { cookies_buffer: "opaque-state" } } },
-      [],
     ],
-    ["private supplier", { code: 0, data: { provider: "KELE" } }, ["KELE"]],
-    [
-      "private domain",
-      { code: 0, data: { providerHost: "private-vendor.example" } },
-      ["private-vendor.example"],
-    ],
-    ["internal URL", { code: 0, data: { link: "https://router.internal/data" } }, []],
-    ["localhost trailing dot", { code: 0, data: { link: "http://localhost./data" } }, []],
+    ["supplier name", { code: 0, data: { provider: "KELE" } }],
+    ["supplier-like domain", { code: 0, data: { providerHost: "private-vendor.example" } }],
+    ["internal URL", { code: 0, data: { link: "https://router.internal/data" } }],
+    ["localhost trailing dot", { code: 0, data: { link: "http://localhost./data" } }],
     [
       "percent-encoded localhost trailing dot",
       { code: 0, data: { link: "http://%6cocalhost./data" } },
-      [],
     ],
-    ["internal host trailing dot", { code: 0, data: { link: "https://foo.internal./data" } }, []],
-    ["link-local URL", { code: 0, data: { link: "http://169.254.169.254/latest/meta-data" } }, []],
+    ["internal host trailing dot", { code: 0, data: { link: "https://foo.internal./data" } }],
+    ["link-local URL", { code: 0, data: { link: "http://169.254.169.254/latest/meta-data" } }],
+    ["supplier URL", { code: 0, data: { link: "https://media.private-vendor.example/video.mp4" } }],
+    ["Unicode IDN supplier host", { code: 0, data: { link: "https://例子.公司/video.mp4" } }],
     [
-      "registered supplier URL",
-      { code: 0, data: { link: "https://media.private-vendor.example/video.mp4" } },
-      ["private-vendor.example"],
-    ],
-    [
-      "Unicode IDN registered supplier host",
-      { code: 0, data: { link: "https://例子.公司/video.mp4" } },
-      ["例子.公司"],
-    ],
-    [
-      "punycode host registered as Unicode IDN",
+      "punycode supplier host",
       { code: 0, data: { link: "https://xn--fsqu00a.xn--55qx5d/video.mp4" } },
-      ["例子.公司"],
     ],
+    ["Unicode IDN host", { code: 0, data: { link: "https://例子.公司/video.mp4" } }],
     [
-      "Unicode IDN host registered as punycode",
-      { code: 0, data: { link: "https://例子.公司/video.mp4" } },
-      ["xn--fsqu00a.xn--55qx5d"],
-    ],
-    [
-      "host extracted from a registered full URL",
+      "supplier host from a full URL",
       { code: 0, data: { link: "https://private-fixture.invalid/other" } },
-      ["https://private-fixture.invalid/original"],
     ],
     [
-      "subdomain matched from a registered full URL",
+      "supplier subdomain from a full URL",
       { code: 0, data: { link: "https://cdn.private-fixture.invalid/other" } },
-      ["https://private-fixture.invalid/original"],
     ],
     [
-      "punycode host extracted from a registered Unicode full URL",
+      "punycode host from a Unicode full URL",
       { code: 0, data: { link: "https://xn--fsqu00a.xn--55qx5d/other" } },
-      ["https://例子.公司/original"],
     ],
+    ["non-ASCII supplier name in plain text", { code: 0, data: { source: "私有供应商" } }],
     [
-      "non-ASCII registered private name in plain text",
-      { code: 0, data: { source: "私有供应商" } },
-      ["私有供应商"],
-    ],
-    [
-      "non-ASCII registered private name in an encoded URL path",
+      "non-ASCII supplier name in an encoded URL path",
       {
         code: 0,
         data: {
           link: "https://public-cdn.example/%E7%A7%81%E6%9C%89%E4%BE%9B%E5%BA%94%E5%95%86/video",
         },
       },
-      ["私有供应商"],
     ],
     [
-      "percent-encoded registered supplier host",
+      "percent-encoded supplier host",
       { code: 0, data: { link: "https://%70rivate-vendor.example/video.mp4" } },
-      ["private-vendor.example"],
     ],
     [
-      "percent-encoded registered supplier path",
+      "percent-encoded supplier path",
       { code: 0, data: { link: "https://public-cdn.example/%70rivate-vendor/video.mp4" } },
-      ["private-vendor"],
     ],
     [
-      "percent-encoded registered supplier fragment",
+      "percent-encoded supplier fragment",
       { code: 0, data: { link: "https://public-cdn.example/video#%70rivate-vendor" } },
-      ["private-vendor"],
     ],
     [
       "percent-encoded secret path",
@@ -453,42 +474,34 @@ describe("callEndpoint", () => {
           link: "https://public-cdn.example/sk%252Dproj%252Dabcdefghijklmnopqrstuv/video",
         },
       },
-      [],
     ],
     [
       "percent-encoded internal fragment",
       { code: 0, data: { link: "https://public-cdn.example/video#%72outeRef" } },
-      [],
     ],
-    [
-      "URL userinfo",
-      { code: 0, data: { link: "https://user:secret@api.justoneapi.com/data" } },
-      [],
-    ],
-    ["scheme-relative URL", { code: 0, data: { link: "//router.internal/data" } }, []],
-    ["data URL", { code: 0, data: { link: "data:foo/bar,private" } }, []],
-    ["mailto URL", { code: 0, data: { link: "mailto:user@example.com" } }, []],
-    ["gopher URL", { code: 0, data: { link: "gopher://example.com/1" } }, []],
-    ["ssh URL", { code: 0, data: { link: "ssh://example.com/private" } }, []],
-    ["chrome URL", { code: 0, data: { link: "chrome://settings" } }, []],
-    ["about URL", { code: 0, data: { link: "about:blank" } }, []],
-    ["telephone URL", { code: 0, data: { link: "tel:+12025550123" } }, []],
-    ["custom URL", { code: 0, data: { link: "custom:private" } }, []],
-    ["malformed HTTP URL", { code: 0, data: { link: "http:example.com/private" } }, []],
-    ["angle-bracket mailto URL", { code: 0, data: { link: "<mailto:user@example.com>" } }, []],
-    ["braced custom URL", { code: 0, data: { link: "{custom:private}" } }, []],
-    ["path-prefixed mailto URL", { code: 0, data: { link: "foo/mailto:user@example.com" } }, []],
-    ["days pseudo-scheme", { code: 0, data: { link: "days:private" } }, []],
-    ["file URL", { code: 0, data: { link: "file:/etc/passwd" } }, []],
+    ["URL userinfo", { code: 0, data: { link: "https://user:secret@api.justoneapi.com/data" } }],
+    ["scheme-relative URL", { code: 0, data: { link: "//router.internal/data" } }],
+    ["data URL", { code: 0, data: { link: "data:foo/bar,private" } }],
+    ["mailto URL", { code: 0, data: { link: "mailto:user@example.com" } }],
+    ["gopher URL", { code: 0, data: { link: "gopher://example.com/1" } }],
+    ["ssh URL", { code: 0, data: { link: "ssh://example.com/private" } }],
+    ["chrome URL", { code: 0, data: { link: "chrome://settings" } }],
+    ["about URL", { code: 0, data: { link: "about:blank" } }],
+    ["telephone URL", { code: 0, data: { link: "tel:+12025550123" } }],
+    ["custom URL", { code: 0, data: { link: "custom:private" } }],
+    ["malformed HTTP URL", { code: 0, data: { link: "http:example.com/private" } }],
+    ["angle-bracket mailto URL", { code: 0, data: { link: "<mailto:user@example.com>" } }],
+    ["braced custom URL", { code: 0, data: { link: "{custom:private}" } }],
+    ["path-prefixed mailto URL", { code: 0, data: { link: "foo/mailto:user@example.com" } }],
+    ["days pseudo-scheme", { code: 0, data: { link: "days:private" } }],
+    ["file URL", { code: 0, data: { link: "file:/etc/passwd" } }],
     [
       "javascript URL",
       { code: 0, data: { link: "javascript:location.href='https://router.internal'" } },
-      [],
     ],
     [
       "encoded credential query",
       { code: 0, data: { link: "https://api.justoneapi.com/data?%2574oken=private" } },
-      [],
     ],
     [
       "credential query on an arbitrary public host",
@@ -498,7 +511,6 @@ describe("callEndpoint", () => {
           link: "https://d111111abcdef8.cloudfront.net/video.mp4?download_token=private",
         },
       },
-      [],
     ],
     [
       "nested encoded private URL on an arbitrary public host",
@@ -508,17 +520,11 @@ describe("callEndpoint", () => {
           link: "https://redirect.example-cdn.com/?target=http%253A%252F%252F169.254.169.254%252Fmetadata",
         },
       },
-      [],
     ],
-    [
-      "api_key query",
-      { code: 0, data: { link: "https://www.nytimes.com/story?api_key=private" } },
-      [],
-    ],
+    ["api_key query", { code: 0, data: { link: "https://www.nytimes.com/story?api_key=private" } }],
     [
       "multiply encoded api_key query",
       { code: 0, data: { link: "https://www.nytimes.com/story?%2561pi_key=private" } },
-      [],
     ],
     [
       "excessively encoded secret query",
@@ -528,17 +534,14 @@ describe("callEndpoint", () => {
           link: "https://www.nytimes.com/story?redirect=https%252525253A%252525252F%252525252Frouter.internal%252525252Fdata",
         },
       },
-      [],
     ],
     [
       "accessToken query",
       { code: 0, data: { link: "https://www.nytimes.com/story?accessToken=private" } },
-      [],
     ],
     [
       "signature query",
       { code: 0, data: { link: "https://www.nytimes.com/story?signature=private" } },
-      [],
     ],
     [
       "comma-concatenated non-HTTP URL",
@@ -546,7 +549,6 @@ describe("callEndpoint", () => {
         code: 0,
         data: { link: "https://cdn.public.test/a,gopher://else.public.test/x" },
       },
-      [],
     ],
     [
       "semicolon-concatenated non-HTTP URL",
@@ -554,7 +556,6 @@ describe("callEndpoint", () => {
         code: 0,
         data: { link: "https://cdn.public.test/a;gopher://else.public.test/x" },
       },
-      [],
     ],
     [
       "comma-concatenated credential-bearing HTTPS URL",
@@ -564,7 +565,6 @@ describe("callEndpoint", () => {
           link: "https://a.public.test/x,https://user:secret@b.public.test/y",
         },
       },
-      [],
     ],
     [
       "semicolon-concatenated credential-bearing HTTPS URL",
@@ -574,7 +574,6 @@ describe("callEndpoint", () => {
           link: "https://a.public.test/x;https://user:secret@b.public.test/y",
         },
       },
-      [],
     ],
     [
       "comma-concatenated scheme-relative URL",
@@ -582,7 +581,6 @@ describe("callEndpoint", () => {
         code: 0,
         data: { link: "https://a.public.test/x,//b.public.test/y" },
       },
-      [],
     ],
     [
       "encoded credential-bearing HTTPS URL in a path",
@@ -592,7 +590,6 @@ describe("callEndpoint", () => {
           link: "https://a.public.test/x%2Chttps%3A%2F%2Fuser%3Asecret%40b.public.test%2Fy",
         },
       },
-      [],
     ],
     [
       "encoded scheme-relative URL in a fragment",
@@ -600,33 +597,28 @@ describe("callEndpoint", () => {
         code: 0,
         data: { link: "https://a.public.test/x#item%2C%2F%2Fb.public.test%2Fy" },
       },
-      [],
     ],
-    ["CGNAT URL", { code: 0, data: { link: "http://100.64.0.1/data" } }, []],
-    ["IPv4-mapped loopback", { code: 0, data: { link: "http://[::ffff:127.0.0.1]/" } }, []],
+    ["CGNAT URL", { code: 0, data: { link: "http://100.64.0.1/data" } }],
+    ["IPv4-mapped loopback", { code: 0, data: { link: "http://[::ffff:127.0.0.1]/" } }],
     [
       "hex-normalized IPv4-mapped private address",
       { code: 0, data: { link: "http://[::ffff:7f00:1]/" } },
-      [],
     ],
-  ])(
-    "returns a previously blocked runtime payload for %s",
-    async (_name, payload, privateTerms) => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => Response.json(payload))
-      );
-      const result = await callEndpoint(
-        {
-          endpoint_id: "kuaishou.search_video_v2",
-          params: { keyword: "美食" },
-        },
-        runtime(privateTerms)
-      );
+  ])("returns a previously blocked runtime payload for %s", async (_name, payload) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(payload))
+    );
+    const result = await callEndpoint(
+      {
+        endpoint_id: "kuaishou.search_video_v2",
+        params: { keyword: "美食" },
+      },
+      runtime()
+    );
 
-      expect(result).toMatchObject({ success: true, data: payload.data, raw: payload });
-    }
-  );
+    expect(result).toMatchObject({ success: true, data: payload.data, raw: payload });
+  });
 
   it.each([
     "sk-proj-abcdefghijklmnopqrstuv",
@@ -647,7 +639,7 @@ describe("callEndpoint", () => {
         endpoint_id: "kuaishou.search_video_v2",
         params: { keyword: "美食" },
       },
-      runtime([])
+      runtime()
     );
 
     expect(result).toMatchObject({ success: true, data: { value: secret } });

@@ -57,31 +57,6 @@ export class CatalogManager {
   }
 
   async refresh(trigger: "manual" | "cron" | "startup" = "manual"): Promise<RefreshResult> {
-    if (!this.config.privateCatalogTerms.length) {
-      const endpointCount = this.bundled.meta.endpoint_count;
-      const result: RefreshResult = {
-        success: false,
-        changed: false,
-        structure_changed: false,
-        localization_changed: false,
-        endpoint_count: endpointCount,
-        previous_endpoint_count: endpointCount,
-        added: [],
-        removed: [],
-        modified: [],
-        error: {
-          code: "SECURITY_CONFIGURATION_REQUIRED",
-          message: "Dynamic catalog refresh requires the private catalog security registry.",
-        },
-      };
-      await this.saveLastRefreshBestEffort({
-        ...result,
-        trigger,
-        duration_ms: 0,
-        time: new Date().toISOString(),
-      });
-      return result;
-    }
     const previous = await this.safeLoadStore();
     const previousBundle = previous ?? this.safeBundledCatalog();
 
@@ -116,7 +91,6 @@ export class CatalogManager {
         openapiZhText: docs.openapiZhText,
         openapiUrl: this.config.openapiUrl,
         openapiZhUrl: this.config.openapiZhUrl,
-        forbiddenTerms: this.config.privateCatalogTerms,
         requireLocalizedReleaseId: true,
       });
 
@@ -170,7 +144,6 @@ export class CatalogManager {
       const code =
         internalMessage.startsWith("Unsafe") ||
         internalMessage.includes("public catalog") ||
-        internalMessage.startsWith("Registered private term") ||
         internalMessage.startsWith("Non-public URL") ||
         internalMessage.startsWith("Credential-bearing URL")
           ? "CATALOG_UNSAFE"
@@ -222,17 +195,6 @@ export class CatalogManager {
   }
 
   async rollback(): Promise<CatalogRollbackResult> {
-    if (!this.config.privateCatalogTerms.length) {
-      return {
-        success: false,
-        rolled_back: false,
-        endpoint_count: this.bundled.meta.endpoint_count,
-        error: {
-          code: "SECURITY_CONFIGURATION_REQUIRED",
-          message: "Catalog rollback requires the private catalog security registry.",
-        },
-      };
-    }
     if (!this.store.rollback) {
       return {
         success: false,
@@ -244,7 +206,7 @@ export class CatalogManager {
         },
       };
     }
-    const safety = catalogSafetyContext(this.config.privateCatalogTerms);
+    const safety = catalogSafetyContext();
     if (this.store.loadPrevious) {
       const preview = await this.store.loadPrevious(safety);
       if (!preview) {
@@ -285,19 +247,19 @@ export class CatalogManager {
   }
 
   private async safeLoadStore(): Promise<CatalogBundle | null> {
-    // Only releases that crossed saveCandidate -> reload -> confidential scan
+    // Only releases that crossed saveCandidate -> reload -> public-safety scan
     // -> promote may be activated here. Never trust the legacy compatibility
     // bundle on a request path: it has no durable promotion attestation. The
     // bundled catalog is release-scanned at build time and is the safe fallback.
-    if (!this.config.privateCatalogTerms.length || !this.store.loadPromoted) return null;
-    const safety = catalogSafetyContext(this.config.privateCatalogTerms);
+    if (!this.store.loadPromoted) return null;
+    const safety = catalogSafetyContext();
     try {
       return await this.store.loadPromoted(safety);
     } catch (error) {
       if (error instanceof CatalogSafetyContextMismatchError) {
-        // A newly deployed bundled release may carry the matching registry
-        // revision while KV still points at a release attested under the old
-        // revision. Only fall back after proving the bundled release matches.
+        // A newly deployed bundled release may carry the current safety policy
+        // while storage still points at a release attested under an older one.
+        // Only fall back after proving the bundled release matches.
         this.safeBundledCatalog();
       }
       return null;
@@ -305,13 +267,8 @@ export class CatalogManager {
   }
 
   private safeBundledCatalog(): CatalogBundle {
-    if (this.config.privateCatalogTerms.length) {
-      assertPromotedCatalogBundle(this.bundled);
-      assertCatalogSafetyContext(
-        this.bundled.meta.security,
-        catalogSafetyContext(this.config.privateCatalogTerms)
-      );
-    }
+    assertPromotedCatalogBundle(this.bundled);
+    assertCatalogSafetyContext(this.bundled.meta.security, catalogSafetyContext());
     return this.bundled;
   }
 
@@ -328,16 +285,14 @@ export class CatalogManager {
       if (staged.meta.release_id !== next.meta.release_id) {
         throw new Error("Catalog candidate release verification failed");
       }
-      assertSafeCatalogValue(staged, "candidate catalog", this.config.privateCatalogTerms);
+      assertSafeCatalogValue(staged, "candidate catalog");
       if (catalogBundleSha256(staged) !== catalogBundleSha256(next)) {
         throw new Error("Catalog candidate content verification failed");
       }
       if (bundleSemanticFingerprint(staged) !== bundleSemanticFingerprint(next)) {
         throw new Error("Catalog candidate semantic verification failed");
       }
-      await this.store.promoteCandidate(
-        catalogReleaseAttestation(staged, this.config.privateCatalogTerms)
-      );
+      await this.store.promoteCandidate(catalogReleaseAttestation(staged));
       return;
     }
     throw new Error("Catalog store does not support verified candidate promotion");

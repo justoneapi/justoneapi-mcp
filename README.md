@@ -58,11 +58,9 @@ You can also run the MCP server locally with `npx`.
 }
 ```
 
-The confidential `JUSTONEAPI_PRIVATE_CATALOG_TERMS` registry is an operator-only catalog release
-safeguard. Without it, discovery and schema tools use the release-scanned bundled catalog, and
-dynamic catalog refresh, promotion, and rollback remain disabled. Runtime API and account calls do
-not require this registry and return the upstream payload through the normal truncation behavior.
-Do not copy the registry into shared or public client configuration.
+Catalog builds and dynamic releases use built-in public-safety validation and require no operator
+security registry or secret. Runtime API and account calls return the upstream payload without
+MCP-layer response truncation.
 
 ## Token
 

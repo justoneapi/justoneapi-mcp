@@ -121,8 +121,8 @@ The incoming MCP token is converted to the backend API `token` parameter. GET
 endpoints use query parameters. Form POST endpoints use
 `application/x-www-form-urlencoded`.
 
-Responses preserve upstream data shape but are wrapped in MCP metadata. Large
-arrays and strings are truncated, and pagination hints are returned through
+Responses preserve the complete upstream data shape without intentional MCP-layer
+truncation and are wrapped in MCP metadata. Pagination hints are returned through
 `next_step`.
 
 ## Auth
@@ -198,7 +198,7 @@ Required coverage:
 - catalog generation from OpenAPI fixtures.
 - search ranking and platform/domain aliases.
 - schema output shape.
-- call validation, parameter mapping, upstream code mapping, truncation, and
+- call validation, parameter mapping, upstream code mapping, complete response passthrough, and
   pagination hints.
 - stdio/HTTP auth extraction and admin checks.
 

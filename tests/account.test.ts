@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { silentLogger } from "../src/common/logger.js";
 import { RuntimeContext } from "../src/common/runtime.js";
-import { getAccountBalance, getUsageSummary } from "../src/tools/account.js";
+import { GetUsageSummaryInput, getAccountBalance, getUsageSummary } from "../src/tools/account.js";
 
-function runtime(privateCatalogTerms = ["private-registry-canary"]): RuntimeContext {
+function runtime(): RuntimeContext {
   return {
     transport: "stdio",
     config: {
@@ -14,7 +14,6 @@ function runtime(privateCatalogTerms = ["private-registry-canary"]): RuntimeCont
       catalogMemoryTtlMs: 60000,
       debug: false,
       searchV2Enabled: false,
-      privateCatalogTerms,
       timeoutMs: 1000,
       retry: 0,
     },
@@ -53,33 +52,41 @@ describe("account tools", () => {
     }
   });
 
-  it("gets usage summary and truncates large arrays", async () => {
+  it("gets the complete usage summary without truncating arrays or strings", async () => {
+    const payload = {
+      code: 0,
+      message: null,
+      data: {
+        apiTrendDaily: {
+          days: Array.from({ length: 125 }, (_, id) => `2026-06-${id + 1}`),
+          series: [{ name: "api", data: Array.from({ length: 125 }, (_, id) => id) }],
+        },
+        description: "用".repeat(4001),
+      },
+    };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        Response.json({
-          code: 0,
-          message: null,
-          data: {
-            apiTrendDaily: {
-              days: Array.from({ length: 3 }, (_, id) => `2026-06-${id + 1}`),
-              series: [{ name: "api", data: Array.from({ length: 12 }, (_, id) => id) }],
-            },
-          },
-        })
-      )
+      vi.fn(async () => Response.json(payload))
     );
 
-    const result = await getUsageSummary({ max_items: 5 }, runtime());
+    const result = await getUsageSummary({}, runtime());
 
     expect(result.success).toBe(true);
-    expect(result.truncated).toBe(true);
+    expect(result.data).toEqual(payload.data);
+    expect(result.raw).toEqual(payload);
+    expect(result.truncated).toBe(false);
+    expect(result).not.toHaveProperty("truncation");
+  });
+
+  it("accepts and ignores the removed max_items field from legacy callers", () => {
+    expect(GetUsageSummaryInput.parse({ max_items: 1 })).toEqual({});
+    expect(GetUsageSummaryInput.shape).not.toHaveProperty("max_items");
   });
 
   it.each([
-    ["get_account_balance", () => getAccountBalance({}, runtime([]))],
-    ["get_usage_summary", () => getUsageSummary({ max_items: 5 }, runtime([]))],
-  ])("calls %s without a private registry", async (_tool, invoke) => {
+    ["get_account_balance", () => getAccountBalance({}, runtime())],
+    ["get_usage_summary", () => getUsageSummary({}, runtime())],
+  ])("calls %s without catalog security configuration", async (_tool, invoke) => {
     const fetchSpy = vi.fn(async () => Response.json({ code: 0, data: { value: "ok" } }));
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -94,31 +101,30 @@ describe("account tools", () => {
       vi.fn(async () => Response.json(payload))
     );
 
-    await expect(getAccountBalance({}, runtime([]))).resolves.toMatchObject({
+    await expect(getAccountBalance({}, runtime())).resolves.toMatchObject({
       success: true,
       data: payload.data,
       raw: payload,
     });
   });
 
-  it("passes a previously blocked usage response into the existing truncation logic", async () => {
+  it("returns a previously blocked usage response unchanged", async () => {
+    const payload = {
+      code: 0,
+      data: {
+        rows: [{ label: "public" }, { label: "complete-response-canary" }],
+      },
+    };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        Response.json({
-          code: 0,
-          data: {
-            rows: [{ label: "public" }, { label: "private-registry-canary" }],
-          },
-        })
-      )
+      vi.fn(async () => Response.json(payload))
     );
 
-    const result = await getUsageSummary({ max_items: 1 }, runtime([]));
+    const result = await getUsageSummary({}, runtime());
 
-    expect(result).toMatchObject({ success: true, truncated: true });
+    expect(result).toMatchObject({ success: true, truncated: false, raw: payload });
     if (result.success) {
-      expect(result.data).toEqual({ rows: [{ label: "public" }] });
+      expect(result.data).toEqual(payload.data);
     }
   });
 });

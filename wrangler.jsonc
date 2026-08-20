@@ -8,32 +8,31 @@
   "routes": [
     {
       "pattern": "mcp.justoneapi.com",
-      "custom_domain": true
-    }
+      "custom_domain": true,
+    },
   ],
   "compatibility_date": "2026-06-23",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "head_sampling_rate": 1,
   },
   "vars": {
     "JUSTONEAPI_BASE_URL": "https://api.justoneapi.com",
     "JUSTONEAPI_OPENAPI_URL": "https://docs.justoneapi.com/openapi.json",
     "JUSTONEAPI_OPENAPI_ZH_URL": "https://docs.justoneapi.com/openapi-zh.json",
     "JUSTONEAPI_SEARCH_V2_ENABLED": "true",
-    "JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS": "true",
     "JUSTONEAPI_CATALOG_REFRESH_INTERVAL_MS": "3600000",
-    "JUSTONEAPI_CATALOG_MEMORY_TTL_MS": "60000"
+    "JUSTONEAPI_CATALOG_MEMORY_TTL_MS": "60000",
   },
   "kv_namespaces": [
     {
       "binding": "JUSTONEAPI_MCP_CATALOG",
       "id": "aef3b62053174379acc159ff181536f7",
-      "preview_id": "33a3770ce2a0496989f8896c28e8657e"
-    }
+      "preview_id": "33a3770ce2a0496989f8896c28e8657e",
+    },
   ],
   "triggers": {
-    "crons": ["0 * * * *"]
-  }
+    "crons": ["0 * * * *"],
+  },
 }

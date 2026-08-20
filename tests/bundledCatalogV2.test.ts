@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeHighlights } from "../src/catalog/highlights.js";
-import { assertSafeCatalogValue, parsePrivateCatalogTerms } from "../src/catalog/security.js";
+import { assertSafeCatalogValue } from "../src/catalog/security.js";
 import { loadWorkerConfig } from "../src/config.js";
 import { bundledCatalog } from "../src/generated/bundledCatalog.js";
 import { searchEndpoints } from "../src/search/rank.js";
@@ -13,15 +13,12 @@ function search(query: string, platform?: string) {
 
 describe("released bundled catalog V2 fail-safe smoke", () => {
   it("passes the complete bundled catalog through the release safety gate", () => {
-    expect(() =>
-      assertSafeCatalogValue(
-        bundledCatalog,
-        "bundled catalog",
-        parsePrivateCatalogTerms(process.env.JUSTONEAPI_PRIVATE_CATALOG_TERMS)
-      )
-    ).not.toThrow();
+    expect(() => assertSafeCatalogValue(bundledCatalog, "bundled catalog")).not.toThrow();
     expect(endpoints.every((endpoint) => !endpoint.endpoint_family?.includes(":"))).toBe(true);
-    expect(bundledCatalog.meta.generator_version).toBe("5");
+    expect(bundledCatalog.meta.generator_version).toBe("6");
+    expect(bundledCatalog.meta.security).toEqual({
+      safety_policy_version: expect.any(String),
+    });
     for (const endpoint of endpoints) {
       expect(endpoint).not.toHaveProperty("key_response_fields");
       expect(endpoint).not.toHaveProperty("response_field_descriptions");
@@ -34,26 +31,6 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
   it("keeps V2 disabled until the released catalog has structured discovery metadata", () => {
     expect(loadWorkerConfig({}).searchV2Enabled).toBe(false);
     expect(searchEndpoints(endpoints, { query: "淘宝券后价" }).ranking_version).toBe("legacy");
-  });
-
-  it("fails closed when a release requires an unconfigured private-term registry", () => {
-    expect(() => loadWorkerConfig({ JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS: "true" })).toThrow(
-      /registry is required/i
-    );
-    expect(
-      loadWorkerConfig({
-        JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS: "true",
-        JUSTONEAPI_PRIVATE_CATALOG_TERMS: '["private-provider.example"]',
-      }).privateCatalogTerms
-    ).toEqual(["private-provider.example"]);
-    for (const malformed of ['["private-provider.example",]', "{}", '["", "term"]']) {
-      expect(() =>
-        loadWorkerConfig({
-          JUSTONEAPI_REQUIRE_PRIVATE_CATALOG_TERMS: "true",
-          JUSTONEAPI_PRIVATE_CATALOG_TERMS: malformed,
-        })
-      ).toThrow(/registry JSON/i);
-    }
   });
 
   it("contains the reviewed structured highlight release", () => {
@@ -97,9 +74,7 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
       )
     ).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "CAPABILITY", concept: "video_download" }),
-        expect.objectContaining({ kind: "CAPABILITY", concept: "video_note_details" }),
-        expect.objectContaining({ kind: "LIMITATION", concept: "image_text_note_details" }),
+        expect.objectContaining({ kind: "CONDITION", concept: "video_download" }),
       ])
     );
   });
@@ -114,16 +89,19 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
     );
   });
 
-  it("uses capability and limitation metadata when choosing note-detail versions", () => {
+  it("uses the current note-detail conditions and limitations during discovery", () => {
     const videoOutput = search("小红书下载视频");
-    expect(videoOutput.results[0]?.endpoint_id).toBe("xiaohongshu.get_note_detail_v6");
+    const videoDetail = videoOutput.results.find(
+      (result) => result.endpoint_id === "xiaohongshu.get_note_detail_v6"
+    );
+    expect(videoDetail?.conditional).toBe(true);
+    expect(videoDetail?.conditions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "CONDITION", concept: "video_download" }),
+      ])
+    );
     expect(videoOutput.results.map((result) => result.endpoint_id)).not.toContain(
       "xiaohongshu.get_note_detail_v1"
-    );
-    expect(videoOutput.results[0]?.matched_capabilities).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "CAPABILITY", concept: "video_download" }),
-      ])
     );
 
     const imageOutput = search("小红书图文笔记详情");
@@ -145,8 +123,8 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
     ["RedNote share link expansion", "xiaohongshu.share_url_transfer_v1", false],
     ["快手分享链接解析", "kuaishou.share_url_transfer_v1", false],
     ["Kuaishou short link resolution", "kuaishou.share_url_transfer_v1", false],
-    ["抖音视频分享链接解析", "douyin.share_url_transfer_v1", true],
-    ["Douyin video short link resolution", "douyin.share_url_transfer_v1", true],
+    ["抖音视频分享链接解析", "douyin.share_url_transfer_v1", false],
+    ["Douyin video short link resolution", "douyin.share_url_transfer_v1", false],
     ["B站视频分享链接解析", "bilibili.share_url_transfer_v1", true],
     ["Bilibili video short link resolution", "bilibili.share_url_transfer_v1", true],
   ])(
@@ -170,8 +148,6 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
   );
 
   it.each([
-    ["抖音图文分享链接解析", "douyin.share_url_transfer_v1"],
-    ["Douyin image-text post link resolution", "douyin.share_url_transfer_v1"],
     ["B站动态短链解析", "bilibili.share_url_transfer_v1"],
     ["Bilibili article link resolution", "bilibili.share_url_transfer_v1"],
   ])("excludes a video-only short-link endpoint for unsupported intent %s", (query, endpointId) => {
@@ -179,6 +155,16 @@ describe("released bundled catalog V2 fail-safe smoke", () => {
     expect(output.ranking_version).toBe("v2");
     expect(output.results.map((result) => result.endpoint_id)).not.toContain(endpointId);
   });
+
+  it.each(["抖音图文分享链接解析", "Douyin image-text post link resolution"])(
+    "does not present the current Douyin video-link endpoint with high confidence for %s",
+    (query) => {
+      const output = search(query);
+      expect(output.ranking_version).toBe("v2");
+      expect(output.results[0]?.endpoint_id).toBe("douyin.share_url_transfer_v1");
+      expect(output.confidence).toBe("low");
+    }
+  );
 
   it("does not inject generic discovery tokens into every endpoint", () => {
     for (const token of ["search", "detail", "comment", "video", "note"]) {

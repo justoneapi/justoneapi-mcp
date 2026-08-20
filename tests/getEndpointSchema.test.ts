@@ -16,7 +16,7 @@ class MemoryStore implements CatalogStore {
   }
 }
 
-function runtime(bundle: CatalogBundle, privateCatalogTerms: string[] = []): RuntimeContext {
+function runtime(bundle: CatalogBundle): RuntimeContext {
   const config = {
     baseUrl: "https://api.justoneapi.com",
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
@@ -25,17 +25,13 @@ function runtime(bundle: CatalogBundle, privateCatalogTerms: string[] = []): Run
     catalogMemoryTtlMs: 60_000,
     debug: false,
     searchV2Enabled: false,
-    privateCatalogTerms,
     timeoutMs: 1_000,
     retry: 0,
   };
   return {
     transport: "stdio",
     config,
-    catalogManager: new CatalogManager(new MemoryStore(bundle), bundle, {
-      ...config,
-      privateCatalogTerms: [],
-    }),
+    catalogManager: new CatalogManager(new MemoryStore(bundle), bundle, config),
     logger: silentLogger,
     getToken: () => "test-token",
     isAdmin: () => false,
@@ -142,7 +138,7 @@ describe("get_endpoint_schema public projection", () => {
 
     const result = await getEndpointSchema(
       { endpoint_id: "douyin.fans_portrait_v1" },
-      runtime(bundle, ["Audience portrait"])
+      runtime(bundle)
     );
     expect(result.highlights).toEqual([
       { type: "INFO", content: "Legacy client guidance.", kind: "GUIDANCE" },
@@ -159,5 +155,35 @@ describe("get_endpoint_schema public projection", () => {
     expect(JSON.stringify(result)).not.toMatch(
       /actualSupplier|routeRef|functionId|normalizerKey|evidence|fixture/i
     );
+  });
+
+  it("returns an empty use-case list when the OpenAPI operation omits x-use-cases", async () => {
+    const openapi = {
+      paths: {
+        "/api/web/render/v2": {
+          get: {
+            summary: "Render page",
+            description: "Render a public web page from the submitted URL.",
+            operationId: "getWebRenderV2",
+            "x-search-aliases": ["render page", "page renderer"],
+            "x-recommended": true,
+            responses: {},
+          },
+        },
+      },
+    };
+    const bundle = buildCatalogBundle({
+      openapi,
+      openapiText: JSON.stringify(openapi),
+      openapiUrl: "https://docs.justoneapi.com/openapi.json",
+      openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
+    });
+
+    const result = await getEndpointSchema({ endpoint_id: "web.render_v2" }, runtime(bundle));
+
+    expect(result.use_cases).toEqual([]);
+    expect(result.search_aliases).toEqual(["render page", "page renderer"]);
+    expect(result.recommended).toBe(true);
+    expect(result.endpoint_family).toBe("web_render");
   });
 });

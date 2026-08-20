@@ -67,7 +67,6 @@ function getWorkerCatalogManager(env: Env): CatalogManager {
     openapiZhUrl: config.openapiZhUrl,
     ttl: config.catalogMemoryTtlMs,
     searchV2Enabled: config.searchV2Enabled,
-    privateCatalogTerms: config.privateCatalogTerms.join("\0"),
   });
   if (!cachedManager || cachedManager.key !== key) {
     cachedManager = {

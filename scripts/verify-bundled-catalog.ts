@@ -2,17 +2,13 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCatalogBundle } from "../src/catalog/build.js";
-import { assertSafeCatalogValue, configuredPrivateCatalogTerms } from "../src/catalog/security.js";
+import { assertSafeCatalogValue } from "../src/catalog/security.js";
 import { DEFAULT_OPENAPI_URL, DEFAULT_OPENAPI_ZH_URL } from "../src/config.js";
 import { bundledCatalog } from "../src/generated/bundledCatalog.js";
 
 async function main() {
   const openapiUrl = process.env.JUSTONEAPI_OPENAPI_URL ?? DEFAULT_OPENAPI_URL;
   const openapiZhUrl = process.env.JUSTONEAPI_OPENAPI_ZH_URL ?? DEFAULT_OPENAPI_ZH_URL;
-  const privateTerms = configuredPrivateCatalogTerms(
-    process.env.JUSTONEAPI_PRIVATE_CATALOG_TERMS,
-    "true"
-  );
   const [openapiText, openapiZhText] = await Promise.all([
     fetchText(openapiUrl),
     fetchText(openapiZhUrl),
@@ -25,10 +21,9 @@ async function main() {
     openapiUrl: publicSourceUrl(openapiUrl, DEFAULT_OPENAPI_URL),
     openapiZhUrl: publicSourceUrl(openapiZhUrl, DEFAULT_OPENAPI_ZH_URL),
     generatedAt: bundledCatalog.meta.generated_at,
-    forbiddenTerms: privateTerms,
     requireLocalizedReleaseId: true,
   });
-  assertSafeCatalogValue(bundledCatalog, "bundled catalog", privateTerms);
+  assertSafeCatalogValue(bundledCatalog, "bundled catalog");
 
   const mismatches = [
     expected.meta.source.openapi_sha256 === bundledCatalog.meta.source.openapi_sha256

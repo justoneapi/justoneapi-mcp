@@ -16,11 +16,12 @@ import {
 const BUNDLE_KEY = "catalog:bundle";
 const LAST_REFRESH_KEY = "catalog:last-refresh";
 const LOCK_KEY = "catalog:refresh-lock";
-const POINTERS_KEY = "catalog:pointers";
+const POINTERS_KEY = "catalog:pointers:v3";
+const LEGACY_POINTERS_KEY = "catalog:pointers";
 const RELEASE_PREFIX = "catalog:release:";
-const POINTER_SCHEMA_VERSION = 2;
+const POINTER_SCHEMA_VERSION = 3;
 
-type CatalogPointersV2 = {
+type CatalogPointersV3 = {
   schema_version: typeof POINTER_SCHEMA_VERSION;
   active?: CatalogReleaseAttestation;
   previous?: CatalogReleaseAttestation;
@@ -39,25 +40,28 @@ export class KvCatalogStore implements CatalogStore {
   }
 
   async loadPromoted(safety: CatalogSafetyContext): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     return pointers?.active ? await this.readAttestedRelease(pointers.active, safety) : null;
   }
 
   async loadActive(): Promise<CatalogBundle | null> {
     const raw = await this.kv.get<Record<string, unknown>>(POINTERS_KEY, "json");
-    const releaseId = activeReleaseId(raw);
+    const legacyRaw = raw
+      ? null
+      : await this.kv.get<Record<string, unknown>>(LEGACY_POINTERS_KEY, "json");
+    const releaseId = activeReleaseId(raw) ?? activeReleaseId(legacyRaw);
     return releaseId
       ? await this.readRelease(releaseId)
       : await this.kv.get<CatalogBundle>(BUNDLE_KEY, "json");
   }
 
   async loadPrevious(safety: CatalogSafetyContext): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     return pointers?.previous ? await this.readAttestedRelease(pointers.previous, safety) : null;
   }
 
   async loadCandidate(): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     return pointers?.candidate ? await this.readRelease(pointers.candidate) : null;
   }
 
@@ -70,13 +74,13 @@ export class KvCatalogStore implements CatalogStore {
     if (!existing) {
       await this.kv.put(`${RELEASE_PREFIX}${releaseId}`, JSON.stringify(bundle));
     }
-    const pointers = (await this.readPointersV2()) ?? freshPointers();
+    const pointers = (await this.readPointers()) ?? freshPointers();
     await this.writePointers({ ...pointers, candidate: releaseId });
   }
 
   async promoteCandidate(attestation: CatalogReleaseAttestation): Promise<void> {
     assertCatalogReleaseAttestation(attestation);
-    const pointers = (await this.readPointersV2()) ?? freshPointers();
+    const pointers = (await this.readPointers()) ?? freshPointers();
     if (pointers.candidate !== attestation.release_id) {
       throw new Error("Catalog candidate release mismatch");
     }
@@ -89,7 +93,7 @@ export class KvCatalogStore implements CatalogStore {
     }
 
     // Older Worker versions read only the legacy bundle. Write the already
-    // scanned candidate there before switching V2 so an emergency code
+    // scanned candidate there before switching the V3 pointer so an emergency code
     // rollback cannot reactivate a stale, unverified catalog.
     await this.kv.put(BUNDLE_KEY, JSON.stringify(candidate));
     await this.writePointers({
@@ -103,7 +107,7 @@ export class KvCatalogStore implements CatalogStore {
   }
 
   async rollback(safety: CatalogSafetyContext): Promise<CatalogBundle | null> {
-    const pointers = await this.readPointersV2();
+    const pointers = await this.readPointers();
     if (!pointers?.active || !pointers.previous) return null;
     await this.readAttestedRelease(pointers.active, safety);
     const previous = await this.readAttestedRelease(pointers.previous, safety);
@@ -139,10 +143,10 @@ export class KvCatalogStore implements CatalogStore {
     await this.kv.delete(LOCK_KEY);
   }
 
-  private async readPointersV2(): Promise<CatalogPointersV2 | null> {
+  private async readPointers(): Promise<CatalogPointersV3 | null> {
     const value = await this.kv.get<unknown>(POINTERS_KEY, "json");
     if (!isRecord(value) || value.schema_version !== POINTER_SCHEMA_VERSION) return null;
-    const pointers: CatalogPointersV2 = { schema_version: POINTER_SCHEMA_VERSION };
+    const pointers: CatalogPointersV3 = { schema_version: POINTER_SCHEMA_VERSION };
     if (value.active !== undefined) pointers.active = parseAttestation(value.active);
     if (value.previous !== undefined) pointers.previous = parseAttestation(value.previous);
     if (value.candidate !== undefined) {
@@ -153,7 +157,7 @@ export class KvCatalogStore implements CatalogStore {
     return pointers;
   }
 
-  private async writePointers(pointers: CatalogPointersV2): Promise<void> {
+  private async writePointers(pointers: CatalogPointersV3): Promise<void> {
     await this.kv.put(POINTERS_KEY, JSON.stringify(pointers));
   }
 
@@ -179,7 +183,7 @@ export class KvCatalogStore implements CatalogStore {
   }
 }
 
-function freshPointers(): CatalogPointersV2 {
+function freshPointers(): CatalogPointersV3 {
   return { schema_version: POINTER_SCHEMA_VERSION };
 }
 
@@ -195,7 +199,6 @@ function parseAttestation(value: unknown): CatalogReleaseAttestation {
     !isRecord(value) ||
     typeof value.release_id !== "string" ||
     typeof value.content_sha256 !== "string" ||
-    typeof value.registry_revision !== "string" ||
     typeof value.safety_policy_version !== "string"
   ) {
     throw new Error("Invalid catalog release attestation");
@@ -203,7 +206,6 @@ function parseAttestation(value: unknown): CatalogReleaseAttestation {
   const attestation: CatalogReleaseAttestation = {
     release_id: value.release_id,
     content_sha256: value.content_sha256,
-    registry_revision: value.registry_revision,
     safety_policy_version: value.safety_policy_version,
   };
   assertCatalogReleaseAttestation(attestation);

@@ -14,7 +14,6 @@ export type McpErrorCode =
   | "CATALOG_REFRESH_FAILED"
   | "OPENAPI_FETCH_FAILED"
   | "OPENAPI_PARSE_FAILED"
-  | "SECURITY_CONFIGURATION_REQUIRED"
   | "NETWORK_TIMEOUT"
   | "NETWORK_ERROR"
   | "UPSTREAM_ERROR";
@@ -91,8 +90,6 @@ export function defaultMessage(code: McpErrorCode): string {
       return "拉取 OpenAPI 失败。";
     case "OPENAPI_PARSE_FAILED":
       return "解析 OpenAPI 失败。";
-    case "SECURITY_CONFIGURATION_REQUIRED":
-      return "服务端未配置私有信息安全词表，接口目录刷新或回滚不可用。";
     case "NETWORK_TIMEOUT":
       return "网络请求超时。";
     case "NETWORK_ERROR":

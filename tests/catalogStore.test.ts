@@ -9,8 +9,9 @@ import { FileCatalogStore } from "../src/node/fileCatalogStore.js";
 import { catalogReleaseAttestation, catalogSafetyContext } from "../src/catalog/release.js";
 
 const tempDirs: string[] = [];
-const PRIVATE_TERMS = ["private-registry-canary"];
-const SAFETY = catalogSafetyContext(PRIVATE_TERMS);
+const SAFETY = catalogSafetyContext();
+const POINTERS_FILE = "catalog-pointers-v3.json";
+const LEGACY_POINTERS_FILE = "catalog-pointers.json";
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -18,14 +19,6 @@ afterEach(async () => {
 });
 
 function bundle(summary: string, generatedAt: string): CatalogBundle {
-  return bundleWithTerms(summary, generatedAt, PRIVATE_TERMS);
-}
-
-function bundleWithTerms(
-  summary: string,
-  generatedAt: string,
-  privateTerms: string[]
-): CatalogBundle {
   const openapi = {
     paths: {
       "/api/web/test/v1": {
@@ -44,7 +37,6 @@ function bundleWithTerms(
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
     openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
     generatedAt,
-    forbiddenTerms: privateTerms,
   });
 }
 
@@ -77,7 +69,6 @@ function localizedBundle(
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
     openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
     generatedAt,
-    forbiddenTerms: PRIVATE_TERMS,
     requireLocalizedReleaseId: true,
   });
 }
@@ -91,7 +82,6 @@ function managerConfig() {
     catalogMemoryTtlMs: 60_000,
     debug: false,
     searchV2Enabled: false,
-    privateCatalogTerms: PRIVATE_TERMS,
     timeoutMs: 1_000,
     retry: 0,
   };
@@ -113,14 +103,14 @@ describe("catalog active/previous release store", () => {
     await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
     expect((await store.loadCandidate())?.meta.release_id).toBe(next.meta.release_id);
 
-    await store.promoteCandidate(catalogReleaseAttestation(next, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(next));
     expect((await store.load())?.catalog.endpoints[0].title_en).toBe("New title");
     expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("New title");
     await expect(store.loadPrevious(SAFETY)).resolves.toBeNull();
     await expect(store.rollback(SAFETY)).resolves.toBeNull();
 
     await store.saveCandidate(latest);
-    await store.promoteCandidate(catalogReleaseAttestation(latest, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(latest));
     expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("Latest title");
     expect((await store.loadPrevious(SAFETY))?.catalog.endpoints[0].title_en).toBe("New title");
 
@@ -142,9 +132,9 @@ describe("catalog active/previous release store", () => {
     changed.catalog.endpoints[0].description_en = "Changed after the candidate was attested.";
     await writeFile(releaseFile, `${JSON.stringify(changed)}\n`, "utf8");
 
-    await expect(
-      store.promoteCandidate(catalogReleaseAttestation(next, PRIVATE_TERMS))
-    ).rejects.toThrow("Catalog candidate content digest mismatch");
+    await expect(store.promoteCandidate(catalogReleaseAttestation(next))).rejects.toThrow(
+      "Catalog candidate content digest mismatch"
+    );
     await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
   });
 
@@ -154,7 +144,7 @@ describe("catalog active/previous release store", () => {
     const store = new FileCatalogStore(dir);
     const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
     await store.saveCandidate(active);
-    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(active));
 
     const changed = structuredClone(active);
     changed.catalog.endpoints[0].description_en = "Changed after promotion.";
@@ -193,16 +183,14 @@ describe("catalog active/previous release store", () => {
     const next = bundle("New title", "2026-07-15T00:00:00.000Z");
 
     await store.saveCandidate(legacy);
-    await store.promoteCandidate(catalogReleaseAttestation(legacy, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(legacy));
     await store.saveCandidate(next);
-    const pointersFile = join(dir, "catalog-pointers.json");
+    const pointersFile = join(dir, POINTERS_FILE);
     const pointersBefore = await readFile(pointersFile, "utf8");
     await rm(join(dir, "catalog-bundle.json"), { force: true });
     await mkdir(join(dir, "catalog-bundle.json"));
 
-    await expect(
-      store.promoteCandidate(catalogReleaseAttestation(next, PRIVATE_TERMS))
-    ).rejects.toThrow();
+    await expect(store.promoteCandidate(catalogReleaseAttestation(next))).rejects.toThrow();
     expect(await readFile(pointersFile, "utf8")).toBe(pointersBefore);
     expect((await store.loadPromoted(SAFETY))?.catalog.endpoints[0].title_en).toBe("Legacy title");
     await expect(store.loadPrevious(SAFETY)).resolves.toBeNull();
@@ -215,10 +203,10 @@ describe("catalog active/previous release store", () => {
     const previous = bundle("Previous title", "2026-07-14T00:00:00.000Z");
     const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
     await store.saveCandidate(previous);
-    await store.promoteCandidate(catalogReleaseAttestation(previous, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(previous));
     await store.saveCandidate(active);
-    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
-    const pointersFile = join(dir, "catalog-pointers.json");
+    await store.promoteCandidate(catalogReleaseAttestation(active));
+    const pointersFile = join(dir, POINTERS_FILE);
     const pointersBefore = await readFile(pointersFile, "utf8");
     await rm(join(dir, "catalog-bundle.json"), { force: true });
     await mkdir(join(dir, "catalog-bundle.json"));
@@ -235,10 +223,10 @@ describe("catalog active/previous release store", () => {
     const previous = bundle("Previous title", "2026-07-14T00:00:00.000Z");
     const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
     await store.saveCandidate(previous);
-    await store.promoteCandidate(catalogReleaseAttestation(previous, PRIVATE_TERMS));
+    await store.promoteCandidate(catalogReleaseAttestation(previous));
     await store.saveCandidate(active);
-    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
-    const pointersFile = join(dir, "catalog-pointers.json");
+    await store.promoteCandidate(catalogReleaseAttestation(active));
+    const pointersFile = join(dir, POINTERS_FILE);
     const pointersBefore = await readFile(pointersFile, "utf8");
 
     const changed = structuredClone(previous);
@@ -297,7 +285,6 @@ describe("catalog active/previous release store", () => {
       catalogMemoryTtlMs: 60_000,
       debug: false,
       searchV2Enabled: false,
-      privateCatalogTerms: ["private-registry-canary"],
       timeoutMs: 1_000,
       retry: 0,
     };
@@ -312,7 +299,7 @@ describe("catalog active/previous release store", () => {
     expect(promoted).toBe(false);
   });
 
-  it("keeps the confidential registry scan at the candidate promotion boundary", async () => {
+  it("keeps the public-safety scan at the candidate promotion boundary", async () => {
     const current = bundle("Current title", "2026-07-14T00:00:00.000Z");
     let candidate: CatalogBundle | null = null;
     const promoteCandidate = vi.fn(async () => undefined);
@@ -321,7 +308,7 @@ describe("catalog active/previous release store", () => {
       save: async () => undefined,
       saveCandidate: async (value) => {
         candidate = structuredClone(value);
-        candidate.meta.generated_at = "private-registry-canary";
+        Object.assign(candidate.catalog.endpoints[0], { routeRef: "internal-route" });
       },
       loadCandidate: async () => candidate,
       promoteCandidate,
@@ -468,11 +455,11 @@ describe("catalog active/previous release store", () => {
         },
         tryAcquireRefreshLock: async () => true,
         releaseRefreshLock: async () => {
-          if (failure === "lock") throw new Error("PRIVATE_REGISTRY_CANARY lock failure");
+          if (failure === "lock") throw new Error("INTERNAL_ERROR_CANARY lock failure");
         },
         saveLastRefresh: async () => {
           if (failure === "telemetry") {
-            throw new Error("PRIVATE_REGISTRY_CANARY telemetry failure");
+            throw new Error("INTERNAL_ERROR_CANARY telemetry failure");
           }
         },
       };
@@ -490,9 +477,9 @@ describe("catalog active/previous release store", () => {
     }
   );
 
-  it("does not reflect private terms from malformed remote metadata", async () => {
+  it("does not reflect malformed remote metadata in public errors", async () => {
     const current = bundle("Current title", "2026-07-14T00:00:00.000Z");
-    const privateTerm = "private-registry-canary";
+    const internalCanary = "INTERNAL_METADATA_CANARY";
     const malformed = {
       "x-openapi-release-id": "release-malformed",
       paths: {
@@ -502,7 +489,7 @@ describe("catalog active/previous release store", () => {
             summary: "Next title",
             "x-highlights": [
               {
-                kind: privateTerm,
+                kind: internalCanary,
                 content: "Public metadata.",
                 concept: "public_metadata",
                 aliases: ["public metadata"],
@@ -530,7 +517,6 @@ describe("catalog active/previous release store", () => {
       catalogMemoryTtlMs: 60_000,
       debug: false,
       searchV2Enabled: false,
-      privateCatalogTerms: [privateTerm],
       timeoutMs: 1_000,
       retry: 0,
     });
@@ -543,10 +529,10 @@ describe("catalog active/previous release store", () => {
         message: "Catalog refresh could not parse the OpenAPI release.",
       },
     });
-    expect(result.error?.message).not.toContain(privateTerm);
+    expect(result.error?.message).not.toContain(internalCanary);
   });
 
-  it("uses only the release-scanned bundled catalog when the private registry is absent", async () => {
+  it("uses only the release-scanned bundled catalog when no promoted release exists", async () => {
     const trusted = bundle("Bundled title", "2026-07-14T00:00:00.000Z");
     const untrusted = bundle("KELE private source", "2026-07-15T00:00:00.000Z");
     const store: CatalogStore = {
@@ -554,32 +540,21 @@ describe("catalog active/previous release store", () => {
       loadActive: async () => untrusted,
       save: async () => undefined,
     };
-    const manager = new CatalogManager(store, trusted, {
-      baseUrl: "https://api.justoneapi.com",
-      openapiUrl: "https://docs.justoneapi.com/openapi.json",
-      openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
-      catalogRefreshIntervalMs: 0,
-      catalogMemoryTtlMs: 60_000,
-      debug: false,
-      searchV2Enabled: false,
-      privateCatalogTerms: [],
-      timeoutMs: 1_000,
-      retry: 0,
-    });
+    const manager = new CatalogManager(store, trusted, managerConfig());
 
     await expect(manager.load()).resolves.toMatchObject({
       catalog: { endpoints: [expect.objectContaining({ title_en: "Bundled title" })] },
     });
   });
 
-  it("ignores a legacy persisted bundle even when the private registry is configured", async () => {
+  it("ignores a legacy persisted bundle without a promoted pointer", async () => {
     const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
     tempDirs.push(dir);
     const store = new FileCatalogStore(dir);
     const trusted = bundle("Bundled title", "2026-07-14T00:00:00.000Z");
     const legacy = bundle("Legacy title", "2026-07-15T00:00:00.000Z");
-    legacy.catalog.endpoints[0].title = "PRIVATE_REGISTRY_CANARY legacy title";
-    legacy.catalog.endpoints[0].title_en = "PRIVATE_REGISTRY_CANARY legacy title";
+    legacy.catalog.endpoints[0].title = "UNATTESTED_CATALOG_CANARY legacy title";
+    legacy.catalog.endpoints[0].title_en = "UNATTESTED_CATALOG_CANARY legacy title";
     await store.save(legacy);
 
     await expect(new CatalogManager(store, trusted, managerConfig()).load()).resolves.toMatchObject(
@@ -589,13 +564,15 @@ describe("catalog active/previous release store", () => {
     );
     await expect(store.loadActive()).resolves.toMatchObject({
       catalog: {
-        endpoints: [expect.objectContaining({ title_en: "PRIVATE_REGISTRY_CANARY legacy title" })],
+        endpoints: [
+          expect.objectContaining({ title_en: "UNATTESTED_CATALOG_CANARY legacy title" }),
+        ],
       },
     });
     await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
   });
 
-  it("ignores an unversioned active pointer created by a legacy deployment", async () => {
+  it("ignores obsolete V2 pointers and falls back to the bundled catalog", async () => {
     const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
     tempDirs.push(dir);
     const store = new FileCatalogStore(dir);
@@ -608,74 +585,23 @@ describe("catalog active/previous release store", () => {
       "utf8"
     );
     await writeFile(
-      join(dir, "catalog-pointers.json"),
-      `${JSON.stringify({ active: legacyActive.meta.release_id })}\n`,
+      join(dir, LEGACY_POINTERS_FILE),
+      `${JSON.stringify({
+        schema_version: 2,
+        active: { release_id: legacyActive.meta.release_id },
+      })}\n`,
       "utf8"
     );
 
     expect((await store.loadActive())?.catalog.endpoints[0].title_en).toBe("Legacy active title");
     await expect(store.loadPromoted(SAFETY)).resolves.toBeNull();
     await expect(new CatalogManager(store, trusted, managerConfig()).load()).resolves.toBe(trusted);
-  });
 
-  it("fails closed when the runtime private registry revision changes", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
-    tempDirs.push(dir);
-    const store = new FileCatalogStore(dir);
-    const active = bundle("Active title", "2026-07-15T00:00:00.000Z");
-    await store.saveCandidate(active);
-    await store.promoteCandidate(catalogReleaseAttestation(active, PRIVATE_TERMS));
-
-    const changedTerms = ["different-private-registry"];
-    await expect(store.loadPromoted(catalogSafetyContext(changedTerms))).rejects.toThrow(
-      "Catalog security registry or safety policy revision mismatch"
-    );
-    await expect(
-      new CatalogManager(store, active, {
-        ...managerConfig(),
-        privateCatalogTerms: changedTerms,
-      }).load()
-    ).rejects.toThrow("Catalog security registry or safety policy revision mismatch");
-  });
-
-  it("migrates from an old registry attestation through the matching bundled release", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "justoneapi-mcp-catalog-"));
-    tempDirs.push(dir);
-    const store = new FileCatalogStore(dir);
-    const oldTerms = PRIVATE_TERMS;
-    const newTerms = ["new-private-registry"];
-    const oldActive = bundleWithTerms("Old active title", "2026-07-14T00:00:00.000Z", oldTerms);
-    const newBundled = bundleWithTerms("New bundled title", "2026-07-15T00:00:00.000Z", newTerms);
-    await store.saveCandidate(oldActive);
-    await store.promoteCandidate(catalogReleaseAttestation(oldActive, oldTerms));
-    const openapi = {
-      "x-openapi-release-id": "release-new-registry",
-      paths: {
-        "/api/web/test/v1": {
-          get: {
-            summary: "New bundled title",
-            description: "Get public web test data.",
-            operationId: "getWebTestV1",
-            responses: {},
-          },
-        },
-      },
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json(openapi))
-    );
-    const manager = new CatalogManager(store, newBundled, {
-      ...managerConfig(),
-      privateCatalogTerms: newTerms,
-    });
-
-    await expect(manager.load()).resolves.toBe(newBundled);
-    await expect(manager.refresh()).resolves.toMatchObject({ success: true, changed: true });
-    await expect(store.loadPromoted(catalogSafetyContext(newTerms))).resolves.toMatchObject({
-      catalog: { endpoints: [expect.objectContaining({ title_en: "New bundled title" })] },
-    });
-    await expect(store.loadPrevious(catalogSafetyContext(newTerms))).resolves.toBeNull();
+    const legacyPointersBefore = await readFile(join(dir, LEGACY_POINTERS_FILE), "utf8");
+    await store.saveCandidate(trusted);
+    await store.promoteCandidate(catalogReleaseAttestation(trusted));
+    expect(await readFile(join(dir, LEGACY_POINTERS_FILE), "utf8")).toBe(legacyPointersBefore);
+    expect((await store.loadPromoted(SAFETY))?.meta.release_id).toBe(trusted.meta.release_id);
   });
 
   it("loads only the promoted release without consulting legacy store methods", async () => {
@@ -766,7 +692,6 @@ describe("catalog active/previous release store", () => {
       catalogMemoryTtlMs: 60_000,
       debug: false,
       searchV2Enabled: false,
-      privateCatalogTerms: ["private-registry-canary"],
       timeoutMs: 1_000,
       retry: 0,
     });
@@ -783,49 +708,5 @@ describe("catalog active/previous release store", () => {
     expect(save).not.toHaveBeenCalled();
     expect(saveCandidate).not.toHaveBeenCalled();
     expect(promoteCandidate).not.toHaveBeenCalled();
-  });
-
-  it("does not fetch, stage, promote, or roll back catalogs without the private registry", async () => {
-    const trusted = bundle("Bundled title", "2026-07-14T00:00:00.000Z");
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    const save = vi.fn(async () => undefined);
-    const saveCandidate = vi.fn(async () => undefined);
-    const promoteCandidate = vi.fn(async () => undefined);
-    const rollback = vi.fn(async () => trusted);
-    const store: CatalogStore = {
-      load: async () => trusted,
-      loadActive: async () => trusted,
-      save,
-      saveCandidate,
-      promoteCandidate,
-      rollback,
-    };
-    const manager = new CatalogManager(store, trusted, {
-      baseUrl: "https://api.justoneapi.com",
-      openapiUrl: "https://docs.justoneapi.com/openapi.json",
-      openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
-      catalogRefreshIntervalMs: 0,
-      catalogMemoryTtlMs: 60_000,
-      debug: false,
-      searchV2Enabled: false,
-      privateCatalogTerms: [],
-      timeoutMs: 1_000,
-      retry: 0,
-    });
-
-    await expect(manager.refresh()).resolves.toMatchObject({
-      success: false,
-      error: { code: "SECURITY_CONFIGURATION_REQUIRED" },
-    });
-    await expect(manager.rollback()).resolves.toMatchObject({
-      success: false,
-      error: { code: "SECURITY_CONFIGURATION_REQUIRED" },
-    });
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(save).not.toHaveBeenCalled();
-    expect(saveCandidate).not.toHaveBeenCalled();
-    expect(promoteCandidate).not.toHaveBeenCalled();
-    expect(rollback).not.toHaveBeenCalled();
   });
 });

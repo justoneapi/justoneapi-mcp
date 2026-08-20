@@ -3,7 +3,6 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCatalogBundle } from "../src/catalog/build.js";
 import { DEFAULT_OPENAPI_URL, DEFAULT_OPENAPI_ZH_URL } from "../src/config.js";
-import { configuredPrivateCatalogTerms } from "../src/catalog/security.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,10 +11,6 @@ const root = resolve(__dirname, "..");
 async function main() {
   const openapiUrl = process.env.JUSTONEAPI_OPENAPI_URL ?? DEFAULT_OPENAPI_URL;
   const openapiZhUrl = process.env.JUSTONEAPI_OPENAPI_ZH_URL ?? DEFAULT_OPENAPI_ZH_URL;
-  const privateTerms = configuredPrivateCatalogTerms(
-    process.env.JUSTONEAPI_PRIVATE_CATALOG_TERMS,
-    "true"
-  );
   const [openapiText, openapiZhText] = await Promise.all([
     fetchText(openapiUrl),
     fetchText(openapiZhUrl),
@@ -28,7 +23,6 @@ async function main() {
     openapiZhText,
     openapiUrl: publicSourceUrl(openapiUrl, DEFAULT_OPENAPI_URL),
     openapiZhUrl: publicSourceUrl(openapiZhUrl, DEFAULT_OPENAPI_ZH_URL),
-    forbiddenTerms: privateTerms,
     requireLocalizedReleaseId: true,
   });
 

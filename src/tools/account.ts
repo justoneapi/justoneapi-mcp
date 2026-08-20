@@ -2,13 +2,10 @@ import { z } from "zod";
 import { tokenHash } from "../common/auth.js";
 import { McpToolError, defaultMessage, errorResult, mapUpstreamCode } from "../common/errors.js";
 import { RuntimeContext } from "../common/runtime.js";
-import { truncateJson } from "../common/truncate.js";
 
 export const GetAccountBalanceInput = z.object({});
 
-export const GetUsageSummaryInput = z.object({
-  max_items: z.number().int().min(1).max(100).default(100).optional(),
-});
+export const GetUsageSummaryInput = z.object({});
 
 type UpstreamPayload = {
   code?: number;
@@ -30,29 +27,15 @@ export async function getAccountBalance(
 }
 
 export async function getUsageSummary(
-  input: z.infer<typeof GetUsageSummaryInput>,
+  _input: z.infer<typeof GetUsageSummaryInput>,
   ctx: RuntimeContext
 ) {
   const token = requireToken(ctx);
   const started = Date.now();
   const payload = await callAccountEndpoint("/user/get-usage-summary", token, ctx);
-  const truncated = truncateJson(payload, {
-    maxItems: input.max_items ?? 100,
-    maxTextLength: 4000,
-    maxDepth: 8,
-  });
-  const result = buildResult(truncated.value as UpstreamPayload, "get_usage_summary");
-  await logAccountTool(ctx, "get_usage_summary", token, payload, started, truncated.truncated);
-  return {
-    ...result,
-    truncated: truncated.truncated,
-    truncation: truncated.truncated
-      ? {
-          max_items: input.max_items ?? 100,
-          paths: truncated.paths,
-        }
-      : undefined,
-  };
+  const result = buildResult(payload, "get_usage_summary");
+  await logAccountTool(ctx, "get_usage_summary", token, payload, started);
+  return { ...result, truncated: false };
 }
 
 function requireToken(ctx: RuntimeContext): string {
@@ -131,8 +114,7 @@ async function logAccountTool(
   tool: "get_account_balance" | "get_usage_summary",
   token: string,
   payload: UpstreamPayload,
-  started: number,
-  truncated = false
+  started: number
 ) {
   ctx.logger.info("tool_call", {
     transport: ctx.transport,
@@ -141,7 +123,7 @@ async function logAccountTool(
     success: Number(payload.code) === 0,
     code: payload.code,
     duration_ms: Date.now() - started,
-    truncated,
+    truncated: false,
   });
 }
 

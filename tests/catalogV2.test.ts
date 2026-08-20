@@ -5,14 +5,13 @@ import { catalogSemanticSignature } from "../src/catalog/manager.js";
 import { assertSafeCatalogValue, assertSafePublicValue } from "../src/catalog/security.js";
 import { searchEndpoints } from "../src/search/rank.js";
 
-function build(openapi: Record<string, unknown>, forbiddenTerms: string[] = []) {
+function build(openapi: Record<string, unknown>) {
   return buildCatalogBundle({
     openapi,
     openapiText: JSON.stringify(openapi),
     openapiUrl: "https://docs.justoneapi.com/openapi.json",
     openapiZhUrl: "https://docs.justoneapi.com/openapi-zh.json",
     generatedAt: "2026-07-15T00:00:00.000Z",
-    forbiddenTerms,
   });
 }
 
@@ -415,6 +414,56 @@ describe("structured catalog projection", () => {
     expect(endpoint.endpoint_family).toBe("taobao.product_detail");
     expect(endpoint).not.toHaveProperty("response_schema");
     expect(endpoint).not.toHaveProperty("response_example");
+  });
+
+  it("keeps optional discovery metadata compatible when use cases and families are absent", () => {
+    const bundle = build({
+      paths: {
+        "/api/web/render/v1": {
+          get: {
+            summary: "Render page v1",
+            description: "Render a public web page.",
+            "x-search-aliases": ["render page", "page renderer"],
+            responses: {},
+          },
+        },
+        "/api/web/render/v2": {
+          get: {
+            summary: "Render page v2",
+            description: "Render a public web page.",
+            "x-search-aliases": ["render page", "page renderer"],
+            "x-recommended": true,
+            responses: {},
+          },
+        },
+      },
+    });
+    const v1 = bundle.catalog.endpoints.find(
+      (endpoint) => endpoint.endpoint_id === "web.render_v1"
+    )!;
+    const v2 = bundle.catalog.endpoints.find(
+      (endpoint) => endpoint.endpoint_id === "web.render_v2"
+    )!;
+
+    expect(v1.use_cases).toEqual([]);
+    expect(v2.use_cases).toEqual([]);
+    expect(v1.endpoint_family).toBe("web_render");
+    expect(v2.endpoint_family).toBe(v1.endpoint_family);
+    expect(v1.search_aliases).toEqual(["render page", "page renderer"]);
+    expect(v2.search_aliases).toEqual(["render page", "page renderer"]);
+    expect(v1.recommended).toBe(false);
+    expect(v2.recommended).toBe(true);
+
+    const ranked = searchEndpoints(
+      bundle.catalog.endpoints,
+      { query: "render page" },
+      { mode: "v2" }
+    );
+    expect(ranked.results).toHaveLength(1);
+    expect(ranked.results[0].endpoint_id).toBe("web.render_v2");
+    expect(ranked.results[0].alternatives?.map((item) => item.endpoint_id)).toEqual([
+      "web.render_v1",
+    ]);
   });
 
   it("does not include response schema changes in catalog semantics", () => {
@@ -823,14 +872,13 @@ describe("public catalog leak prevention", () => {
   });
 
   it.each([
-    ["https://example.com/?foo=sk%2Dproj%2Dabcdefghijklmnopqrstuv", []],
-    ["https://example.com/?foo=bearer%20abcdefghijk", []],
-    ["https://example.com/?foo=10%2E0%2E0%2E1", []],
-    ["https://example.com/?foo=Private%20Vendor", ["Private Vendor"]],
-    ["https://example.com/?foo=https%3A%2F%2Fuser%3Apass%40example.com", []],
-    ["https://example.com/?foo=sk%252Dproj%252Dabcdefghijklmnopqrstuv", []],
-  ])("rejects an encoded unsafe URL query value in %s", (value, privateTerms) => {
-    expect(() => assertSafePublicValue({ value }, "public catalog", privateTerms)).toThrow();
+    "https://example.com/?foo=sk%2Dproj%2Dabcdefghijklmnopqrstuv",
+    "https://example.com/?foo=bearer%20abcdefghijk",
+    "https://example.com/?foo=10%2E0%2E0%2E1",
+    "https://example.com/?foo=https%3A%2F%2Fuser%3Apass%40example.com",
+    "https://example.com/?foo=sk%252Dproj%252Dabcdefghijklmnopqrstuv",
+  ])("rejects an encoded unsafe URL query value in %s", (value) => {
+    expect(() => assertSafePublicValue({ value }, "public catalog")).toThrow();
   });
 
   it.each([
@@ -855,87 +903,6 @@ describe("public catalog leak prevention", () => {
     "upstreamResponse fields",
   ])("rejects internal implementation wording variant %s", (value) => {
     expect(() => assertSafePublicValue({ value })).toThrow(/Unsafe internal wording/);
-  });
-
-  it.each(["KELE", "TIKHUB"])(
-    "fails on private supplier name %s injected through the build secret",
-    (privateName) => {
-      const openapi = {
-        paths: {
-          "/api/web/test/v1": {
-            get: {
-              summary: "Test",
-              description: `${privateName}-backed public test data.`,
-              responses: {},
-            },
-          },
-        },
-      };
-      expect(() => build(openapi, ["KELE", "TIKHUB", "private-vendor.example"])).toThrow(
-        /Registered private term/
-      );
-    }
-  );
-
-  it("does not echo a registered private term from an unsafe endpoint id", () => {
-    const privateTerm = "PRIVATE_FIXTURE_VENDOR";
-    const openapi = {
-      paths: {
-        [`/api/${privateTerm}/test/v1`]: {
-          get: {
-            operationId: "getPrivateFixtureTestV1",
-            summary: "Test",
-            description: "Get public test data.",
-            responses: {},
-          },
-        },
-      },
-    };
-
-    try {
-      build(openapi, [privateTerm]);
-      throw new Error("Expected catalog projection to fail");
-    } catch (error) {
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toMatch(/Registered private term/);
-      expect((error as Error).message).not.toContain(privateTerm);
-    }
-  });
-
-  it("matches registered codes as public identifier tokens without substring false positives", () => {
-    expect(() =>
-      assertSafePublicValue(
-        {
-          operationId: "getApiSearchForAuthorV1",
-          description: "Metacritic data can support rapidly changing public research.",
-        },
-        "public catalog",
-        ["HF", "METAC", "RAPID"]
-      )
-    ).not.toThrow();
-    expect(() =>
-      assertSafePublicValue(
-        { schemas: { PublicKeleResponse: { type: "object" } } },
-        "public catalog",
-        ["KELE"]
-      )
-    ).toThrow(/Registered private term/);
-    expect(() =>
-      assertSafePublicValue({ properties: { Result_HF: { type: "string" } } }, "public catalog", [
-        "HF",
-      ])
-    ).toThrow(/Registered private term/);
-  });
-
-  it.each([
-    ["Private Vendor", "PrivateVendorResponse"],
-    ["private-vendor", "PrivateVendorResponse"],
-    ["PrivateVendor", "PrivateVendorResponse"],
-    ["Private Vendor", "private_vendor_response"],
-  ])("matches registered private term variant %s in %s", (term, value) => {
-    expect(() =>
-      assertSafePublicValue({ schemas: { [value]: { type: "object" } } }, "public catalog", [term])
-    ).toThrow(/Registered private term/);
   });
 
   it.each(["apiKey", "access_token", "Authorization", "client-secret"])(

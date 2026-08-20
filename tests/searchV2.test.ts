@@ -147,6 +147,47 @@ describe("deterministic structured ranking", () => {
     expect(search(query).results[0]?.endpoint_id).toBe(expected);
   });
 
+  it.each([
+    ["content preprocessing", "description"],
+    ["share URL input", "parameter"],
+    ["short link expansion", "title/alias"],
+    ["public redirect URL", "capability"],
+  ])("ranks an endpoint without use cases from its %s metadata", (query, source) => {
+    const resolver = endpoint("web.share_link_resolver_v1", {
+      title: "Share link resolver",
+      title_en: "Share link resolver",
+      description: "Expand a public share link before content preprocessing.",
+      description_en: "Expand a public share link before content preprocessing.",
+      search_aliases: ["short link expansion"],
+      use_cases: [],
+      params: [
+        {
+          name: "share_url",
+          api_name: "shareUrl",
+          in: "query",
+          required: true,
+          type: "string",
+          description: "Share URL input accepted for expansion.",
+          description_en: "Share URL input accepted for expansion.",
+        },
+      ],
+      highlights: [
+        highlight(
+          "CAPABILITY",
+          "public_redirect_url",
+          ["public redirect URL"],
+          "Returns the public redirect URL."
+        ),
+      ],
+    });
+
+    const output = search(query, [resolver]);
+    expect(output.results[0]?.endpoint_id).toBe(resolver.endpoint_id);
+    expect(output.results[0]?.match_reasons).toEqual(
+      expect.arrayContaining([expect.stringMatching(new RegExp(`^${source}:`))])
+    );
+  });
+
   it("never treats a LIMITATION as a positive match", () => {
     const output = search("小红书下载视频");
     expect(output.results.map((result) => result.endpoint_id)).not.toContain(

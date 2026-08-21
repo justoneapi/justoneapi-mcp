@@ -18,14 +18,30 @@ HTTP or local stdio servers, including:
 - Cursor
 - Other MCP-compatible AI assistants
 
-For Codex, add JustOneAPI as a remote MCP server and use the Remote HTTP URL and
-Authorization header below.
+Clients that implement MCP OAuth discovery can connect with only the remote URL
+and complete authorization in the browser. Clients without that flow can keep
+using a legacy API Token header or local stdio.
 
 ## Quick Start
 
-### Remote HTTP
+### Remote HTTP with OAuth
 
-Remote HTTP is the recommended way to use JustOneAPI MCP.
+When OAuth is enabled on the production service, add this URL as a custom MCP
+connector:
+
+```text
+https://mcp.justoneapi.com/mcp
+```
+
+The client discovers the protected-resource metadata, redirects you to
+`auth.justoneapi.com`, and asks for the scopes required by the tools you use.
+No JustOneAPI API Token needs to be pasted into the client. This works with any
+MCP client that implements the standard OAuth discovery flow; UI wording varies
+by client.
+
+### Remote HTTP with an existing API Token
+
+The existing header-based connection remains supported for compatibility:
 
 ```json
 {
@@ -42,7 +58,8 @@ Remote HTTP is the recommended way to use JustOneAPI MCP.
 
 ### Local stdio
 
-You can also run the MCP server locally with `npx`.
+You can also run the MCP server locally with `npx`. Version 2 requires Node.js
+20 or newer.
 
 ```json
 {
@@ -58,11 +75,18 @@ You can also run the MCP server locally with `npx`.
 }
 ```
 
+Node.js 18 users must keep the legacy `justoneapi-mcp@1.0.1` package until they
+can upgrade Node.js. OAuth applies to the remote Worker; stdio continues to read
+`JUSTONEAPI_TOKEN` locally.
+
+The published CLI supports Node.js 20, 22, and 24. Wrangler's Worker build and
+type-generation commands require Node.js 22 or newer.
+
 Catalog builds and dynamic releases use built-in public-safety validation and require no operator
 security registry or secret. Runtime API and account calls return the upstream payload without
 MCP-layer response truncation.
 
-## Token
+## Authentication and scopes
 
 Use your JustOneAPI token in one of these ways:
 
@@ -77,6 +101,46 @@ JUSTONEAPI_TOKEN=your_token
 ```
 
 `Bearer your_token` is the recommended Authorization format.
+
+OAuth access tokens use three least-privilege scopes:
+
+- `mcp:catalog:read` — search endpoints, inspect schemas, and list platforms.
+- `mcp:api:call` — call a JustOneAPI endpoint.
+- `mcp:account:read` — view balance and usage.
+
+`call_endpoint` may incur charges under the API Token linked during OAuth and
+its current pricing, permissions, balance, and budget. It validates the
+endpoint and parameters before obtaining a short-lived delegation token, then
+makes exactly one upstream dispatch. It does not automatically retry an
+uncertain timeout, network failure, or HTTP 502/503/504 result.
+
+Legacy API Tokens are still sent to the JustOneAPI backend in the established
+query/form format. OAuth access and delegation tokens are never put in backend
+URLs or form bodies; delegation tokens are sent only as an Authorization Bearer
+header.
+
+## Operator rollout
+
+OAuth is additive and feature-flagged:
+
+- `JUSTONEAPI_OAUTH_MODE=off` keeps the remote service legacy-only and hides
+  OAuth discovery metadata.
+- `JUSTONEAPI_OAUTH_MODE=dual` accepts both existing API Tokens and standard
+  OAuth on the exact `https://mcp.justoneapi.com` origin.
+- Preview and `workers.dev` routes remain legacy-only, even if the variable is
+  set to `dual`.
+
+The Worker uses `private_key_jwt` for Authorization Server introspection and
+RFC 8693 token exchange. Store the private JWK set and active `kid` as Worker
+secrets; never commit `.dev.vars`, PEM files, or private JWK sets. Rotate keys by
+publishing old and new public keys first, switching the active `kid` second, and
+removing the retired key only after the overlap period.
+
+npm 2.0 is first published under the `next` dist-tag through OIDC trusted
+publishing. After the exact published artifact passes the Node.js 20, 22, and
+24 smoke checks, an operator promotes it separately with npm 2FA using
+`npm dist-tag add justoneapi-mcp@2.0.0 latest`. This is never automated with an
+`NPM_TOKEN`. See [RELEASE.md](RELEASE.md).
 
 ## Things You Can Ask
 

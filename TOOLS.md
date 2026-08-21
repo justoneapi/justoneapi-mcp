@@ -8,6 +8,18 @@ Use tools in this order:
 search_endpoints -> get_endpoint_schema -> call_endpoint
 ```
 
+## Authentication and scopes
+
+Remote OAuth clients receive per-tool security descriptors. Catalog tools use
+`mcp:catalog:read`, `call_endpoint` uses `mcp:api:call`, and both account tools
+use `mcp:account:read`. A missing OAuth scope is returned as an HTTP 403 Bearer
+challenge before dispatch and is also retained in the tool result metadata for
+MCP clients that consume `mcp/www_authenticate` there.
+
+Legacy remote API Tokens and local `JUSTONEAPI_TOKEN` remain supported. OAuth
+is not used by stdio, and `refresh_catalog` is never exposed by the remote
+Worker.
+
 ## search_endpoints
 
 Find endpoint candidates from natural language.
@@ -136,6 +148,12 @@ untouched for older server versions during the rollout.
 
 Validate params and call an endpoint.
 
+This operation may incur charges under the bound API Token's current pricing,
+permissions, balance, and budget. It validates the endpoint and parameters
+first and then makes exactly one backend dispatch. It does not retry an
+uncertain timeout, network error, or HTTP 502/503/504 response. OAuth delegation
+tokens are sent only in the Authorization header and never in a URL or form.
+
 Input:
 
 ```json
@@ -245,7 +263,8 @@ Output:
 
 ## refresh_catalog
 
-Admin-only. Refresh the endpoint catalog from JustOneAPI OpenAPI documents.
+Local stdio operator-only tool. Refresh the endpoint catalog from JustOneAPI
+OpenAPI documents. It is hidden and unavailable on the remote Worker.
 
 Input:
 

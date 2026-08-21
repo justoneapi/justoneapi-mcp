@@ -16,14 +16,26 @@ JustOneAPI Token 调用接口。
 - Cursor
 - 其他支持 MCP 的 AI 助手
 
-如果你使用 Codex，可以把 JustOneAPI 添加为远程 MCP 服务，并使用下面的远程 HTTP 地址和
-Authorization 请求头。
+支持 MCP OAuth 自动发现的客户端，只需要填写远程地址，再在浏览器中完成授权即可。暂不支持
+这套授权流程的客户端，仍可继续使用原有 API Token 请求头或本地 stdio。
 
 ## 快速接入
 
-### 远程 HTTP
+### 使用 OAuth 的远程 HTTP
 
-推荐使用远程 HTTP 方式接入。
+生产服务开启 OAuth 后，把下面的地址添加为自定义 MCP 连接器：
+
+```text
+https://mcp.justoneapi.com/mcp
+```
+
+客户端会自动发现受保护资源信息，跳转到 `auth.justoneapi.com`，并申请当前工具所需的权限。
+不需要把 JustOneAPI API Token 粘贴进客户端。凡是实现标准 MCP OAuth 发现流程的客户端都可以
+使用，具体入口名称可能因客户端而异。
+
+### 使用现有 API Token 的远程 HTTP
+
+原有的请求头接入方式继续兼容：
 
 ```json
 {
@@ -43,7 +55,7 @@ Catalog 构建和动态发布使用内置的公开安全校验，不需要运维
 
 ### 本地 stdio
 
-也可以使用 `npx` 在本地运行 MCP 服务。
+也可以使用 `npx` 在本地运行 MCP 服务。2.0 版本要求 Node.js 20 或更高版本。
 
 ```json
 {
@@ -59,7 +71,13 @@ Catalog 构建和动态发布使用内置的公开安全校验，不需要运维
 }
 ```
 
-## Token
+仍在使用 Node.js 18 的用户，需要暂时固定使用旧版 `justoneapi-mcp@1.0.1`，升级 Node.js 后再
+使用 2.0。OAuth 只用于远程 Worker；stdio 仍从本地读取 `JUSTONEAPI_TOKEN`。
+
+发布后的 CLI 支持 Node.js 20、22、24；Wrangler 的 Worker 构建与类型生成命令要求 Node.js
+22 或更高版本。
+
+## 认证与权限范围
 
 使用你的 JustOneAPI Token：
 
@@ -74,6 +92,37 @@ JUSTONEAPI_TOKEN=your_token
 ```
 
 推荐使用 `Bearer your_token` 格式。
+
+OAuth 按最小权限拆为三个 scope：
+
+- `mcp:catalog:read`：搜索接口、查看接口结构、列出平台。
+- `mcp:api:call`：调用 JustOneAPI 接口。
+- `mcp:account:read`：查看余额和用量。
+
+`call_endpoint` 可能按 OAuth 绑定的 API Token 当前价格、权限、余额及预算产生费用。它会先校验
+接口和参数，再换取短时委托 Token，随后只向上游发起一次请求。对于超时、网络异常或 HTTP
+502/503/504 这种结果不确定的情况，不会自动重试。
+
+原有 API Token 仍按既有 query/form 方式传给 JustOneAPI 后端。OAuth Access Token 和委托
+Token 不会写入后端 URL 或表单；委托 Token 只通过 Authorization Bearer 请求头发送。
+
+## 运维发布方式
+
+OAuth 是独立新增并由开关控制的能力：
+
+- `JUSTONEAPI_OAUTH_MODE=off`：远程服务保持原有模式，并隐藏 OAuth 发现信息。
+- `JUSTONEAPI_OAUTH_MODE=dual`：只在准确的 `https://mcp.justoneapi.com` origin 上同时接受原有
+  API Token 和标准 OAuth。
+- 预览地址和 `workers.dev` 即使配置为 `dual`，也始终只按 legacy 模式运行。
+
+Worker 使用 `private_key_jwt` 调用授权服务器的 introspection 和 RFC 8693 token exchange。
+私有 JWK Set 与 active `kid` 必须保存在 Worker Secret 中，禁止提交 `.dev.vars`、PEM 或私钥
+JWK。轮换时先同时发布新旧公钥，再切换 active `kid`，经过重叠期后再删除旧密钥。
+
+npm 2.0 会先通过 OIDC trusted publishing 发布到 `next` dist-tag。该版本的 Node.js 20、22、
+24 smoke 检查全部通过后，由操作人员使用 npm 2FA 独立执行
+`npm dist-tag add justoneapi-mcp@2.0.0 latest`。此步骤不使用 `NPM_TOKEN` 自动化。完整清单见
+[RELEASE.md](RELEASE.md)。
 
 ## 使用示例
 

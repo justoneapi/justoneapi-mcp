@@ -5,37 +5,60 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify bundled catalog release
-        run: npm run verify:catalog
+      - name: Offline validation
+        run: npm run validate:offline
 
-      - name: Lint
-        run: npm run lint
+      - name: Build CLI
+        run: npm run build:cli
 
-      - name: Build
-        run: npm run build
+      - name: Build Worker bundle
+        if: matrix.node-version != 20
+        run: npm run build:worker
 
-      - name: Test
-        run: npm test
+      - name: Verify npm package closure
+        run: npm run verify:package
+
+      - name: Pack, clean-install, and smoke the CLI
+        run: bash scripts/verify-packed-cli.sh
 
       - name: Check Worker types
+        if: matrix.node-version != 20
         run: npx wrangler types worker-configuration.d.ts --include-runtime false --check
 
       - name: Check build output
-        run: test -f dist/src/index.js && test -f dist/src/worker.js
+        run: test -f dist/src/index.js && test ! -e dist/src/worker.js
+
+  verify-live-catalog:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: "npm"
+      - run: npm ci
+      - name: Verify the current live OpenAPI catalog
+        run: npm run verify:catalog

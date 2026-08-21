@@ -1,0 +1,49 @@
+name: Deploy production Worker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-worker-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Require the main branch
+        run: test "${GITHUB_REF}" = "refs/heads/main"
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install from the lockfile
+        run: npm ci
+
+      - name: Validate code and tests offline
+        run: npm run validate:offline
+
+      - name: Verify the committed catalog against the live source
+        run: npm run verify:catalog
+
+      - name: Check Worker generated types
+        run: npx wrangler types worker-configuration.d.ts --include-runtime false --check
+
+      - name: Build the Worker without deploying
+        run: npm run build:worker
+
+      - name: Deploy the production Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: test -n "${CLOUDFLARE_API_TOKEN}" && npx wrangler deploy

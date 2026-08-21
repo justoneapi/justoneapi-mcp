@@ -11,18 +11,24 @@
     "dev": "tsx src/index.ts",
     "dev:stdio": "tsx src/index.ts",
     "dev:worker": "npx wrangler dev",
-    "deploy:worker": "npm run build:catalog && npm run verify:catalog && npx wrangler deploy",
+    "deploy:worker": "npm run verify:catalog && npx wrangler deploy",
     "build:catalog": "tsx scripts/build-catalog.ts",
     "verify:catalog": "tsx scripts/verify-bundled-catalog.ts",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run build:cli",
+    "build:cli": "npm run clean && tsc -p tsconfig.cli.json",
+    "build:worker": "wrangler deploy --dry-run --outdir .wrangler/build",
+    "build:all": "npm run build:cli && npm run build:worker",
+    "verify:package": "tsx scripts/verify-package-layout.ts",
+    "validate:offline": "npm run format:check && npm run lint && npm run typecheck && npm test",
     "start": "node dist/src/index.js",
     "test": "vitest run",
     "lint": "eslint \"{src,scripts,tests}/**/*.ts\"",
     "lint:fix": "eslint \"{src,scripts,tests}/**/*.ts\" --fix",
     "format": "prettier --write \"{src,scripts,tests}/**/*.ts\" \"*.md\"",
     "format:check": "prettier --check \"{src,scripts,tests}/**/*.ts\" \"*.md\"",
-    "prepublishOnly": "npm run build:catalog && npm run verify:catalog && npm run build && npm test"
+    "prepublishOnly": "npm run validate:offline && npm run build:cli && npm run verify:package"
   },
   "keywords": [
     "mcp",
@@ -44,28 +50,32 @@
     "url": "https://github.com/justoneapi/justoneapi-mcp/issues"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "dist",
     "README.md",
     "README.zh-CN.md",
+    "RELEASE.md",
     "TOOLS.md",
     "LICENSE"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.16.2",
+    "@modelcontextprotocol/server": "2.0.0",
     "dotenv": "^17.2.3",
     "zod": "^4.3.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260623.1",
+    "@cloudflare/workers-types": "4.20260623.1",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@types/node": "^25.0.3",
     "@typescript-eslint/eslint-plugin": "^8.51.0",
     "@typescript-eslint/parser": "^8.51.0",
+    "agents": "0.21.0",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
+    "jose": "6.2.9",
     "prettier": "^3.7.4",
     "ts-node": "^10.9.2",
     "tsx": "^4.22.4",

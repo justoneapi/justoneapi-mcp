@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import "dotenv/config";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { CatalogManager } from "./catalog/manager.js";
 import { FileCatalogStore } from "./node/fileCatalogStore.js";
 import { createJustOneMcpServer } from "./server/createServer.js";
@@ -10,6 +11,14 @@ import { RuntimeContext } from "./common/runtime.js";
 
 async function main() {
   const config = loadNodeConfig();
+  const token = process.env.JUSTONEAPI_TOKEN?.trim();
+  if (!token) {
+    console.error(
+      "[justoneapi-mcp] ERROR: JUSTONEAPI_TOKEN is required but not set.\n" +
+        "Please set JUSTONEAPI_TOKEN in your MCP host configuration."
+    );
+    process.exit(1);
+  }
   const catalogManager = new CatalogManager(
     new FileCatalogStore(config.catalogCacheDir),
     bundledCatalog,
@@ -21,21 +30,19 @@ async function main() {
     config,
     catalogManager,
     logger: stderrLogger,
-    getToken: () => process.env.JUSTONEAPI_TOKEN?.trim() || null,
-    isAdmin: () => true,
+    auth: { kind: "api-key", source: "env", token },
   };
 
-  if (!runtime.getToken()) {
-    console.error(
-      "[justoneapi-mcp] ERROR: JUSTONEAPI_TOKEN is required but not set.\n" +
-        "Please set JUSTONEAPI_TOKEN in your MCP host configuration."
-    );
-    process.exit(1);
-  }
+  const stdio = serveStdio(() => createJustOneMcpServer(runtime), {
+    legacy: "serve",
+    onerror: (error) => stderrLogger.error("stdio_protocol_error", { message: error.message }),
+  });
 
-  const server = createJustOneMcpServer(runtime);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const close = () => {
+    void stdio.close().finally(() => process.exit(0));
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
 
   if (config.debug) {
     stderrLogger.info("server_started", {

@@ -1,19 +1,9 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/server";
 import { RuntimeContext } from "../common/runtime.js";
 import { runTool } from "../common/toolResult.js";
-import {
-  GetAccountBalanceInput,
-  GetUsageSummaryInput,
-  getAccountBalance,
-  getUsageSummary,
-} from "../tools/account.js";
-import { callEndpoint, CallEndpointInput } from "../tools/callEndpoint.js";
-import { getEndpointSchema, GetEndpointSchemaInput } from "../tools/getEndpointSchema.js";
-import { listPlatforms } from "../tools/listPlatforms.js";
-import { refreshCatalog, RefreshCatalogInput } from "../tools/refreshCatalog.js";
-import { searchEndpoints, SearchEndpointsInput } from "../tools/searchEndpoints.js";
 import { version } from "../version.js";
+import { createCanonicalToolDescriptors } from "./toolDescriptors.js";
+import { toolDefinitionsFor } from "./toolRegistry.js";
 
 const INSTRUCTIONS = `JustOneAPI MCP exposes JustOneAPI endpoints through a small discovery workflow.
 
@@ -32,73 +22,22 @@ export function createJustOneMcpServer(ctx: RuntimeContext): McpServer {
     description: INSTRUCTIONS,
   });
 
-  server.registerTool(
-    "search_endpoints",
-    {
-      description:
-        "Find JustOneAPI endpoint candidates from natural language. Returns endpoint_id candidates; call get_endpoint_schema next.",
-      inputSchema: SearchEndpointsInput.shape,
-    },
-    async (input) => runTool(() => searchEndpoints(SearchEndpointsInput.parse(input), ctx))
-  );
+  for (const definition of toolDefinitionsFor(ctx)) {
+    server.registerTool(
+      definition.name,
+      {
+        title: definition.title,
+        description: definition.description,
+        inputSchema: definition.inputSchema,
+        outputSchema: definition.outputSchema,
+        annotations: definition.annotations,
+      },
+      async (input) => runTool(() => definition.invoke(input, ctx))
+    );
+  }
 
-  server.registerTool(
-    "get_endpoint_schema",
-    {
-      description:
-        "Get the full schema and parameter contract for an endpoint_id returned by search_endpoints.",
-      inputSchema: GetEndpointSchemaInput.shape,
-    },
-    async (input) => runTool(() => getEndpointSchema(GetEndpointSchemaInput.parse(input), ctx))
-  );
-
-  server.registerTool(
-    "call_endpoint",
-    {
-      description:
-        "Validate params and call a JustOneAPI endpoint by endpoint_id. Params should use snake_case names from get_endpoint_schema.",
-      inputSchema: CallEndpointInput.shape,
-    },
-    async (input) => runTool(() => callEndpoint(CallEndpointInput.parse(input), ctx))
-  );
-
-  server.registerTool(
-    "get_account_balance",
-    {
-      description:
-        "Get the current JustOneAPI token's available balance and currency. Use this when the user asks about account balance, remaining balance, or whether the token can continue calling APIs.",
-      inputSchema: GetAccountBalanceInput.shape,
-    },
-    async (input) => runTool(() => getAccountBalance(GetAccountBalanceInput.parse(input), ctx))
-  );
-
-  server.registerTool(
-    "get_usage_summary",
-    {
-      description:
-        "Get the current JustOneAPI token's API usage and spending summary, including recent call trends and spending trends.",
-      inputSchema: GetUsageSummaryInput.shape,
-    },
-    async (input) => runTool(() => getUsageSummary(GetUsageSummaryInput.parse(input), ctx))
-  );
-
-  server.registerTool(
-    "list_platforms",
-    {
-      description: "List supported JustOneAPI platforms and endpoint counts.",
-      inputSchema: z.object({}).shape,
-    },
-    async () => runTool(() => listPlatforms(ctx))
-  );
-
-  server.registerTool(
-    "refresh_catalog",
-    {
-      description: "Admin-only. Refresh the endpoint catalog from JustOneAPI OpenAPI documents.",
-      inputSchema: RefreshCatalogInput.shape,
-    },
-    async (input) => runTool(() => refreshCatalog(RefreshCatalogInput.parse(input), ctx))
-  );
+  const descriptors = createCanonicalToolDescriptors(ctx);
+  server.server.setRequestHandler("tools/list", () => ({ tools: descriptors }));
 
   return server;
 }

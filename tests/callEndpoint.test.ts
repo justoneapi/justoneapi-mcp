@@ -153,8 +153,7 @@ function runtime(activeBundle: CatalogBundle = bundle): RuntimeContext {
       retry: 0,
     }),
     logger: silentLogger,
-    getToken: () => "test-token",
-    isAdmin: () => true,
+    auth: { kind: "api-key", source: "env", token: "test-token" },
   };
 }
 

@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 export const DEFAULT_BASE_URL = "https://api.justoneapi.com";
 export const DEFAULT_OPENAPI_URL = "https://docs.justoneapi.com/openapi.json";
 export const DEFAULT_OPENAPI_ZH_URL = "https://docs.justoneapi.com/openapi-zh.json";

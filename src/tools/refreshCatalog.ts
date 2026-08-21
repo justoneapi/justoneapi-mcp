@@ -19,7 +19,7 @@ export async function refreshCatalog(
   input: z.infer<typeof RefreshCatalogInput>,
   ctx: RuntimeContext
 ) {
-  if (!(await ctx.isAdmin())) {
+  if (ctx.transport !== "stdio") {
     throw new McpToolError({
       code: "PERMISSION_DENIED",
       message: "refresh_catalog requires administrator permission.",

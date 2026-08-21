@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RuntimeContext } from "../common/runtime.js";
+import { authorizeScope, RuntimeContext } from "../common/runtime.js";
 import { McpToolError, defaultMessage } from "../common/errors.js";
 import { normalizeHighlights } from "../catalog/highlights.js";
 
@@ -11,9 +11,7 @@ export async function getEndpointSchema(
   input: z.infer<typeof GetEndpointSchemaInput>,
   ctx: RuntimeContext
 ) {
-  if (!ctx.getToken()) {
-    throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
-  }
+  authorizeScope(ctx, "mcp:catalog:read");
   const endpoint = await ctx.catalogManager.getEndpoint(input.endpoint_id);
   if (!endpoint) {
     throw new McpToolError({

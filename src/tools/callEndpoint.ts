@@ -8,8 +8,13 @@ import {
   validationError,
 } from "../common/errors.js";
 import { inferNextStep } from "../common/pagination.js";
-import { RuntimeContext } from "../common/runtime.js";
-import { tokenHash } from "../common/auth.js";
+import {
+  authorizeScope,
+  resolveUpstreamCredential,
+  RuntimeContext,
+  runtimeTokenHash,
+  type UpstreamCredential,
+} from "../common/runtime.js";
 
 export const CallEndpointInput = z.object({
   endpoint_id: z.string().min(1),
@@ -24,10 +29,7 @@ type UpstreamPayload = {
 };
 
 export async function callEndpoint(input: z.infer<typeof CallEndpointInput>, ctx: RuntimeContext) {
-  const token = ctx.getToken();
-  if (!token) {
-    throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
-  }
+  authorizeScope(ctx, "mcp:api:call");
 
   const endpoint = await ctx.catalogManager.getEndpoint(input.endpoint_id);
   if (!endpoint) {
@@ -39,12 +41,13 @@ export async function callEndpoint(input: z.infer<typeof CallEndpointInput>, ctx
 
   const started = Date.now();
   const normalized = normalizeParams(endpoint, input.params ?? {});
-  const payload = await callUpstream(endpoint, normalized.apiParams, token, ctx);
+  const credential = await resolveUpstreamCredential(ctx, "mcp:api:call");
+  const payload = await callUpstream(endpoint, normalized.apiParams, credential, ctx);
   const upstreamCode = Number(payload.code);
   const isSuccess = upstreamCode === 0;
 
   const nextStep = inferNextStep(endpoint, normalized.normalizedParams, payload);
-  const hash = await tokenHash(token);
+  const hash = await runtimeTokenHash(ctx);
 
   ctx.logger.info("tool_call", {
     transport: ctx.transport,
@@ -157,7 +160,7 @@ function convertValue(param: EndpointParam, value: unknown): unknown {
 async function callUpstream(
   endpoint: EndpointCatalogEntry,
   apiParams: Map<EndpointParam, unknown>,
-  token: string,
+  credential: UpstreamCredential,
   ctx: RuntimeContext
 ): Promise<UpstreamPayload> {
   const url = new URL(endpoint.path, ctx.config.baseUrl);
@@ -165,8 +168,10 @@ async function callUpstream(
   const useFormBody =
     endpoint.method !== "GET" && endpoint.content_type === "application/x-www-form-urlencoded";
 
-  if (useFormBody) body.set("token", token);
-  else url.searchParams.set("token", token);
+  if (credential.kind === "api-key") {
+    if (useFormBody) body.set("token", credential.token);
+    else url.searchParams.set("token", credential.token);
+  }
 
   for (const [param, value] of apiParams.entries()) {
     if (value === undefined || value === null) continue;
@@ -178,14 +183,18 @@ async function callUpstream(
     }
   }
 
-  const response = await fetchWithRetry(
+  const response = await fetchOnce(
     url,
     {
       method: endpoint.method,
-      headers: useFormBody ? { "content-type": "application/x-www-form-urlencoded" } : undefined,
+      headers: {
+        ...(useFormBody ? { "content-type": "application/x-www-form-urlencoded" } : {}),
+        ...(credential.kind === "oauth-delegation"
+          ? { authorization: `Bearer ${credential.bearerToken}` }
+          : {}),
+      },
       body: useFormBody ? body : undefined,
     },
-    ctx.config.retry,
     ctx.config.timeoutMs
   );
 
@@ -211,34 +220,20 @@ async function callUpstream(
   return payload;
 }
 
-async function fetchWithRetry(
-  url: URL,
-  init: RequestInit,
-  retry: number,
-  timeoutMs: number
-): Promise<Response> {
-  const attempts = 1 + Math.max(0, retry);
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(url, { ...init, signal: controller.signal });
-      if (![502, 503, 504].includes(response.status) || attempt === attempts) return response;
-    } catch (error) {
-      lastError = error;
-      if (attempt === attempts) break;
-    } finally {
-      clearTimeout(timer);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+async function fetchOnce(url: URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === "AbortError";
+    throw new McpToolError({
+      code: aborted ? "NETWORK_TIMEOUT" : "NETWORK_ERROR",
+      message: aborted ? "Network timeout." : "Network error.",
+    });
+  } finally {
+    clearTimeout(timer);
   }
-
-  const aborted = lastError instanceof Error && lastError.name === "AbortError";
-  throw new McpToolError({
-    code: aborted ? "NETWORK_TIMEOUT" : "NETWORK_ERROR",
-    message: aborted ? "Network timeout." : "Network error.",
-  });
 }
 
 function encodeParamValue(value: unknown): string {

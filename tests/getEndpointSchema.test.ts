@@ -33,8 +33,7 @@ function runtime(bundle: CatalogBundle): RuntimeContext {
     config,
     catalogManager: new CatalogManager(new MemoryStore(bundle), bundle, config),
     logger: silentLogger,
-    getToken: () => "test-token",
-    isAdmin: () => false,
+    auth: { kind: "api-key", source: "env", token: "test-token" },
   };
 }
 

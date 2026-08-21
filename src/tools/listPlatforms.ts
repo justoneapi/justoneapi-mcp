@@ -1,5 +1,4 @@
-import { RuntimeContext } from "../common/runtime.js";
-import { McpToolError } from "../common/errors.js";
+import { authorizeScope, RuntimeContext } from "../common/runtime.js";
 import {
   PLATFORM_DICTIONARY,
   platformAliases,
@@ -7,9 +6,7 @@ import {
 } from "../search/dictionaries/platforms.js";
 
 export async function listPlatforms(ctx: RuntimeContext) {
-  if (!ctx.getToken()) {
-    throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
-  }
+  authorizeScope(ctx, "mcp:catalog:read");
   const bundle = await ctx.catalogManager.load();
   const counts = new Map<string, number>();
   for (const endpoint of bundle.catalog.endpoints) {

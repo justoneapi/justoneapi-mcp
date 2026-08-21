@@ -1,7 +1,11 @@
 import { z } from "zod";
-import { tokenHash } from "../common/auth.js";
 import { McpToolError, defaultMessage, errorResult, mapUpstreamCode } from "../common/errors.js";
-import { RuntimeContext } from "../common/runtime.js";
+import {
+  resolveUpstreamCredential,
+  RuntimeContext,
+  runtimeTokenHash,
+  type UpstreamCredential,
+} from "../common/runtime.js";
 
 export const GetAccountBalanceInput = z.object({});
 
@@ -18,11 +22,11 @@ export async function getAccountBalance(
   _input: z.infer<typeof GetAccountBalanceInput>,
   ctx: RuntimeContext
 ) {
-  const token = requireToken(ctx);
+  const credential = await resolveUpstreamCredential(ctx, "mcp:account:read");
   const started = Date.now();
-  const payload = await callAccountEndpoint("/user/get-balance", token, ctx);
+  const payload = await callAccountEndpoint("/user/get-balance", credential, ctx);
   const result = buildResult(payload, "get_account_balance");
-  await logAccountTool(ctx, "get_account_balance", token, payload, started);
+  await logAccountTool(ctx, "get_account_balance", payload, started);
   return result;
 }
 
@@ -30,34 +34,32 @@ export async function getUsageSummary(
   _input: z.infer<typeof GetUsageSummaryInput>,
   ctx: RuntimeContext
 ) {
-  const token = requireToken(ctx);
+  const credential = await resolveUpstreamCredential(ctx, "mcp:account:read");
   const started = Date.now();
-  const payload = await callAccountEndpoint("/user/get-usage-summary", token, ctx);
+  const payload = await callAccountEndpoint("/user/get-usage-summary", credential, ctx);
   const result = buildResult(payload, "get_usage_summary");
-  await logAccountTool(ctx, "get_usage_summary", token, payload, started);
+  await logAccountTool(ctx, "get_usage_summary", payload, started);
   return { ...result, truncated: false };
-}
-
-function requireToken(ctx: RuntimeContext): string {
-  const token = ctx.getToken();
-  if (!token) {
-    throw new McpToolError({ code: "AUTH_REQUIRED", message: "Missing JustOneAPI token." });
-  }
-  return token;
 }
 
 async function callAccountEndpoint(
   path: "/user/get-balance" | "/user/get-usage-summary",
-  token: string,
+  credential: UpstreamCredential,
   ctx: RuntimeContext
 ): Promise<UpstreamPayload> {
   const url = new URL(path, ctx.config.baseUrl);
-  url.searchParams.set("token", token);
+  if (credential.kind === "api-key") url.searchParams.set("token", credential.token);
 
   const response = await fetchWithRetry(
     url,
-    { method: "GET" },
-    ctx.config.retry,
+    {
+      method: "GET",
+      headers:
+        credential.kind === "oauth-delegation"
+          ? { authorization: `Bearer ${credential.bearerToken}` }
+          : undefined,
+    },
+    credential.kind === "api-key" ? ctx.config.retry : 0,
     ctx.config.timeoutMs
   );
   const text = await response.text();
@@ -112,14 +114,13 @@ function buildResult(payload: UpstreamPayload, tool: string) {
 async function logAccountTool(
   ctx: RuntimeContext,
   tool: "get_account_balance" | "get_usage_summary",
-  token: string,
   payload: UpstreamPayload,
   started: number
 ) {
   ctx.logger.info("tool_call", {
     transport: ctx.transport,
     tool,
-    token_hash: await tokenHash(token),
+    token_hash: await runtimeTokenHash(ctx),
     success: Number(payload.code) === 0,
     code: payload.code,
     duration_ms: Date.now() - started,

@@ -19,8 +19,7 @@ function runtime(): RuntimeContext {
     },
     catalogManager: undefined,
     logger: silentLogger,
-    getToken: () => "token-test",
-    isAdmin: () => true,
+    auth: { kind: "api-key", source: "env", token: "token-test" },
   } as unknown as RuntimeContext;
 }
 

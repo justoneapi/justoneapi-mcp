@@ -35,6 +35,15 @@ export class McpToolError extends Error {
   }
 }
 
+export class McpOAuthToolError extends McpToolError {
+  readonly challenges: string[];
+
+  constructor(payload: McpErrorPayload, challenges: string[]) {
+    super(payload);
+    this.challenges = challenges;
+  }
+}
+
 export function mapUpstreamCode(code: number | undefined): McpErrorCode {
   switch (code) {
     case 100:

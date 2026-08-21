@@ -619,29 +619,32 @@ describe("structured catalog projection", () => {
     );
   });
 
-  it("rejects more than one recommended endpoint in the same family", () => {
-    expect(() =>
-      build({
-        paths: {
-          "/api/web/render/v1": {
-            get: {
-              summary: "Render v1",
-              "x-endpoint-family": "web.render",
-              "x-recommended": true,
-              responses: {},
-            },
-          },
-          "/api/web/render/v2": {
-            get: {
-              summary: "Render v2",
-              "x-endpoint-family": "web.render",
-              "x-recommended": true,
-              responses: {},
-            },
+  it("allows more than one recommended endpoint in the same family", () => {
+    const bundle = build({
+      paths: {
+        "/api/web/render/v1": {
+          get: {
+            summary: "Render v1",
+            "x-endpoint-family": "web.render",
+            "x-recommended": true,
+            responses: {},
           },
         },
-      })
-    ).toThrow(/multiple recommended versions/i);
+        "/api/web/render/v2": {
+          get: {
+            summary: "Render v2",
+            "x-endpoint-family": "web.render",
+            "x-recommended": true,
+            responses: {},
+          },
+        },
+      },
+    });
+
+    expect(bundle.catalog.endpoints).toMatchObject([
+      { endpoint_id: "web.render_v1", endpoint_family: "web.render", recommended: true },
+      { endpoint_id: "web.render_v2", endpoint_family: "web.render", recommended: true },
+    ]);
   });
 
   it("includes discovery metadata and parameter prose in semantic diff", () => {

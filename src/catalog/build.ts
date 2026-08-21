@@ -151,7 +151,6 @@ export function buildCatalogBundle(options: BuildCatalogOptions): CatalogBundle 
 
   endpoints.sort((a, b) => a.order - b.order || a.endpoint_id.localeCompare(b.endpoint_id));
   assertUniqueEndpointIds(endpoints);
-  assertUniqueRecommendedVersions(endpoints);
   const semanticHash = sha256(JSON.stringify(endpoints));
   const security = catalogSafetyContext();
   const bundle: CatalogBundle = {
@@ -787,20 +786,5 @@ function assertUniqueEndpointIds(endpoints: EndpointCatalogEntry[]) {
   }
   if (duplicates.length) {
     throw new Error(`Duplicate endpoint_id values: ${duplicates.join(", ")}`);
-  }
-}
-
-function assertUniqueRecommendedVersions(endpoints: EndpointCatalogEntry[]) {
-  const recommendedByFamily = new Map<string, string>();
-  for (const endpoint of endpoints) {
-    if (!endpoint.recommended) continue;
-    const family = endpoint.endpoint_family ?? endpoint.endpoint_id;
-    const existing = recommendedByFamily.get(family);
-    if (existing) {
-      throw new Error(
-        `Endpoint family ${family} has multiple recommended versions: ${existing}, ${endpoint.endpoint_id}`
-      );
-    }
-    recommendedByFamily.set(family, endpoint.endpoint_id);
   }
 }

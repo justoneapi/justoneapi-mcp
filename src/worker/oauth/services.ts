@@ -2,7 +2,13 @@ import { sha256Hex } from "../../common/auth.js";
 import { AuthorizationServerClient } from "./authorizationServerClient.js";
 import type { WorkerOAuthConfig } from "./config.js";
 import { IntrospectionTokenVerifier } from "./introspection.js";
-import { parsePrivateJwkSet, type ParsedPrivateJwkSet } from "./jwks.js";
+import {
+  normalizePrivateJwkSetError,
+  OAuthSigningConfigurationError,
+  parsePrivateJwkSet,
+  verifyActiveSigningKey,
+  type ParsedPrivateJwkSet,
+} from "./jwks.js";
 import { RequestTokenExchange } from "./tokenExchange.js";
 
 export type WorkerOAuthServices = {
@@ -23,7 +29,12 @@ export async function getWorkerOAuthServices(
   config: WorkerOAuthConfig
 ): Promise<WorkerOAuthServices> {
   const privateJwks = config.privateJwks;
-  if (!privateJwks) throw new TypeError("OAuth Worker private JWKS is not configured");
+  if (!privateJwks) {
+    throw new OAuthSigningConfigurationError(
+      "private_jwks_missing",
+      "OAuth Worker private JWKS is not configured"
+    );
+  }
   const jwksDigest = await sha256Hex(privateJwks);
   const key = JSON.stringify({
     jwksDigest,
@@ -37,7 +48,13 @@ export async function getWorkerOAuthServices(
   });
   if (cachedServices?.key === key) return cachedServices.value;
 
-  const keySet = parsePrivateJwkSet(privateJwks);
+  let keySet: ParsedPrivateJwkSet;
+  try {
+    keySet = parsePrivateJwkSet(privateJwks);
+  } catch (error) {
+    throw normalizePrivateJwkSetError(error);
+  }
+  await verifyActiveSigningKey(keySet, config.activeKid);
   const client = new AuthorizationServerClient(config, keySet);
   const verifier = new IntrospectionTokenVerifier(config, client);
   const value: WorkerOAuthServices = {

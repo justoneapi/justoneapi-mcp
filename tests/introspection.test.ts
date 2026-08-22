@@ -102,11 +102,22 @@ describe("opaque access-token introspection", () => {
     const failedVerifier = verifier(failed);
     await expect(failedVerifier.verifyAccessToken(OAUTH_ACCESS_TOKEN)).rejects.toMatchObject({
       code: "authorization_server_unavailable",
+      upstreamKind: "network",
+      upstreamStatus: undefined,
     });
     await expect(failedVerifier.verifyAccessToken(OAUTH_ACCESS_TOKEN)).rejects.toMatchObject({
       code: "authorization_server_unavailable",
     });
     expect(failed).toHaveBeenCalledTimes(2);
+
+    const rejected = vi.fn(async () => {
+      throw new AuthorizationServerRequestError("http", "rejected", { status: 401 });
+    });
+    await expect(verifier(rejected).verifyAccessToken(OAUTH_ACCESS_TOKEN)).rejects.toMatchObject({
+      code: "authorization_server_unavailable",
+      upstreamKind: "http",
+      upstreamStatus: 401,
+    });
   });
 
   it("caps cache lifetime at token expiry and supports explicit revocation eviction", async () => {

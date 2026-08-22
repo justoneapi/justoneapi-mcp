@@ -34,7 +34,7 @@ import { KvCatalogStore } from "./worker/kvCatalogStore.js";
 import { inspectMcpRequest } from "./worker/requestScope.js";
 import { loadWorkerOAuthConfig, type WorkerOAuthConfig } from "./worker/oauth/config.js";
 import { OAuthInfrastructureError } from "./worker/oauth/introspection.js";
-import { parsePrivateJwkSet } from "./worker/oauth/jwks.js";
+import { OAuthSigningConfigurationError } from "./worker/oauth/jwks.js";
 import { protectedResourceMetadata } from "./worker/oauth/protectedResourceMetadata.js";
 import { getWorkerOAuthServices } from "./worker/oauth/services.js";
 
@@ -89,7 +89,7 @@ export default {
       response = !canonicalOAuthHost
         ? Response.json({ ok: false, error: "Not found" }, { status: 404 })
         : request.method.toUpperCase() === "GET"
-          ? jwksResponse(oauthConfig)
+          ? await jwksResponse(oauthConfig)
           : methodNotAllowed(["GET", "OPTIONS"]);
     } else if (url.pathname === MCP_ROUTE) {
       response = await mcpResponse(request, env, manager, oauthConfig);
@@ -216,7 +216,18 @@ async function mcpResponse(
     );
     return await serveMcp(request, runtime, inspected.parsedBody, authInfo);
   } catch (error) {
-    if (error instanceof OAuthInfrastructureError || !(error instanceof OAuthError)) {
+    if (error instanceof OAuthInfrastructureError) {
+      stderrLogger.error("oauth_request_failed", {
+        category: error.code,
+        ...(error.upstreamKind ? { upstream_kind: error.upstreamKind } : {}),
+        ...(error.upstreamStatus !== undefined ? { upstream_status: error.upstreamStatus } : {}),
+      });
+      return serviceUnavailableResponse();
+    }
+    if (!(error instanceof OAuthError)) {
+      stderrLogger.error("oauth_request_failed", {
+        category: error instanceof OAuthSigningConfigurationError ? error.code : "unexpected_error",
+      });
       return serviceUnavailableResponse();
     }
     return bearerAuthChallengeResponse(error, {
@@ -280,13 +291,16 @@ function metadataResponse(config: WorkerOAuthConfig): Response {
   });
 }
 
-function jwksResponse(config: WorkerOAuthConfig): Response {
+async function jwksResponse(config: WorkerOAuthConfig): Promise<Response> {
   try {
-    const keySet = parsePrivateJwkSet(config.privateJwks);
-    return Response.json(keySet.publicJwks, {
+    const services = await getWorkerOAuthServices(config);
+    return Response.json(services.keySet.publicJwks, {
       headers: { "Cache-Control": "public, max-age=300" },
     });
-  } catch {
+  } catch (error) {
+    stderrLogger.error("oauth_signing_configuration_invalid", {
+      category: error instanceof OAuthSigningConfigurationError ? error.code : "unexpected_error",
+    });
     return serviceUnavailableResponse();
   }
 }

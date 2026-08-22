@@ -103,6 +103,7 @@ describe("Authorization Server private_key_jwt client", () => {
       client.postForm(config.tokenEndpoint, new URLSearchParams())
     ).rejects.toMatchObject({
       kind: "invalid_response",
+      status: 200,
     });
 
     vi.stubGlobal(
@@ -113,7 +114,20 @@ describe("Authorization Server private_key_jwt client", () => {
       client.postForm(config.tokenEndpoint, new URLSearchParams())
     ).rejects.toMatchObject({
       kind: "invalid_response",
+      status: 200,
       message: expect.not.stringContaining("secret-body"),
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("proxy error", { status: 401 }))
+    );
+    await expect(
+      client.postForm(config.tokenEndpoint, new URLSearchParams())
+    ).rejects.toMatchObject({
+      kind: "invalid_response",
+      status: 401,
+      message: expect.not.stringContaining("proxy error"),
     });
 
     vi.stubGlobal(

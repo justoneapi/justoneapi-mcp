@@ -95,7 +95,8 @@ async function readJsonObject(response: Response): Promise<Record<string, unknow
   if (Number.isFinite(contentLength) && contentLength > MAX_AUTHORIZATION_SERVER_RESPONSE_BYTES) {
     throw new AuthorizationServerRequestError(
       "invalid_response",
-      "Authorization Server response is too large"
+      "Authorization Server response is too large",
+      { status: response.status }
     );
   }
 
@@ -111,7 +112,8 @@ async function readJsonObject(response: Response): Promise<Record<string, unknow
         await reader.cancel();
         throw new AuthorizationServerRequestError(
           "invalid_response",
-          "Authorization Server response is too large"
+          "Authorization Server response is too large",
+          { status: response.status }
         );
       }
       chunks.push(value);
@@ -131,13 +133,15 @@ async function readJsonObject(response: Response): Promise<Record<string, unknow
   } catch {
     throw new AuthorizationServerRequestError(
       "invalid_response",
-      "Authorization Server response is not valid JSON"
+      "Authorization Server response is not valid JSON",
+      { status: response.status }
     );
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new AuthorizationServerRequestError(
       "invalid_response",
-      "Authorization Server response must be an object"
+      "Authorization Server response must be an object",
+      { status: response.status }
     );
   }
   return parsed as Record<string, unknown>;

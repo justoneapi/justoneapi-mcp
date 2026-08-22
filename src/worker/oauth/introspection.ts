@@ -23,10 +23,20 @@ type CacheEntry = {
 
 export class OAuthInfrastructureError extends Error {
   readonly code: "authorization_server_unavailable" | "authorization_server_contract_error";
+  readonly upstreamKind?: AuthorizationServerRequestError["kind"];
+  readonly upstreamStatus?: number;
 
-  constructor(code: OAuthInfrastructureError["code"]) {
+  constructor(
+    code: OAuthInfrastructureError["code"],
+    options: {
+      upstreamKind?: AuthorizationServerRequestError["kind"];
+      upstreamStatus?: number;
+    } = {}
+  ) {
     super(code);
     this.code = code;
+    this.upstreamKind = options.upstreamKind;
+    this.upstreamStatus = options.upstreamStatus;
   }
 }
 
@@ -74,7 +84,10 @@ export class IntrospectionTokenVerifier implements OAuthTokenVerifier {
       );
     } catch (error) {
       if (error instanceof AuthorizationServerRequestError) {
-        throw new OAuthInfrastructureError("authorization_server_unavailable");
+        throw new OAuthInfrastructureError("authorization_server_unavailable", {
+          upstreamKind: error.kind,
+          upstreamStatus: error.status,
+        });
       }
       throw error;
     }

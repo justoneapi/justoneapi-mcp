@@ -15,6 +15,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   clearWorkerOAuthServicesForTests();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -75,9 +76,14 @@ function toolCallRequest(
 }
 
 describe("Worker OAuth HTTP boundary", () => {
-  it.each(["2025-06-18", "2026-07-28"] as const)(
-    "serves the v2 remote tool list through the %s stateless lane",
-    async (protocolVersion) => {
+  it.each([
+    ["dual", "2025-06-18"],
+    ["dual", "2026-07-28"],
+    ["off", "2025-06-18"],
+    ["off", "2026-07-28"],
+  ] as const)(
+    "serves the v2 remote tool list in canonical %s mode through the %s stateless lane",
+    async (mode, protocolVersion) => {
       const headers = new Headers({
         accept: "application/json, text/event-stream",
         authorization: `Bearer ${"A".repeat(16)}`,
@@ -105,15 +111,21 @@ describe("Worker OAuth HTTP boundary", () => {
                   }
                 : {},
           }),
-        })
+        }),
+        env(mode)
       );
       const body = await response.text();
       expect(response.status, body).toBe(200);
       expect(body).toContain("search_endpoints");
       expect(body).toContain("call_endpoint");
       expect(body).not.toContain("refresh_catalog");
-      expect(body).toContain("securitySchemes");
-      expect(body).toContain("oauth2");
+      if (mode === "dual") {
+        expect(body).toContain("securitySchemes");
+        expect(body).toContain("oauth2");
+      } else {
+        expect(body).not.toContain("securitySchemes");
+        expect(body).not.toContain("oauth2");
+      }
     }
   );
 
@@ -165,6 +177,56 @@ describe("Worker OAuth HTTP boundary", () => {
       use: "sig",
     });
     expect(jwks.keys[0]).not.toHaveProperty("d");
+  });
+
+  it("fails the canonical JWKS readiness check when the active signing key is not usable", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const invalidEnv = env("off");
+    invalidEnv.JUSTONEAPI_OAUTH_WORKER_ACTIVE_KID = "missing-key";
+    const response = await fetchWorker(
+      new Request("https://mcp.justoneapi.com/.well-known/jwks.json"),
+      invalidEnv
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "temporarily_unavailable" });
+    const serializedLog = errorLog.mock.calls.flat().join("\n");
+    expect(serializedLog).toContain('"event":"oauth_signing_configuration_invalid"');
+    expect(serializedLog).toContain('"category":"active_kid_not_found"');
+    expect(serializedLog).not.toContain(privateJwks);
+  });
+
+  it("logs only safe diagnostics when the Authorization Server rejects introspection", async () => {
+    const upstreamDetail = "sensitive-upstream-detail";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const asFetch = vi.fn(async () =>
+      Response.json({ error: "invalid_client", detail: upstreamDetail }, { status: 401 })
+    );
+    vi.stubGlobal("fetch", asFetch);
+    const response = await fetchWorker(
+      new Request("https://mcp.justoneapi.com/mcp", {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${OAUTH_ACCESS_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      })
+    );
+    expect(response.status).toBe(503);
+    expect(asFetch).toHaveBeenCalledOnce();
+    const form = new URLSearchParams(String(asFetch.mock.calls[0][1]?.body));
+    const assertion = form.get("client_assertion");
+    if (!assertion) throw new Error("client assertion was not sent");
+    const serializedLog = errorLog.mock.calls.flat().join("\n");
+    expect(serializedLog).toContain('"event":"oauth_request_failed"');
+    expect(serializedLog).toContain('"category":"authorization_server_unavailable"');
+    expect(serializedLog).toContain('"upstream_kind":"http"');
+    expect(serializedLog).toContain('"upstream_status":401');
+    expect(serializedLog).not.toContain(OAUTH_ACCESS_TOKEN);
+    expect(serializedLog).not.toContain(assertion);
+    expect(serializedLog).not.toContain(upstreamDetail);
+    expect(serializedLog).not.toContain(privateJwks);
   });
 
   it("never advertises or accepts OAuth on workers.dev preview routes", async () => {

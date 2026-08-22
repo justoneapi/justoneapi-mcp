@@ -69,8 +69,10 @@ Roll out in this order:
 
 1. Keep `JUSTONEAPI_OAUTH_MODE=off`; install the private JWK Set and active
    `kid` as Worker secrets.
-2. Verify the canonical public JWKS contains only the intended overlapping
-   public keys; preview and `workers.dev` routes must return 404 for JWKS/PRM.
+2. Verify the canonical public JWKS returns 200 and contains only the intended
+   overlapping public keys. This endpoint signs and verifies a local probe with
+   the configured active key as a readiness check; a 503 blocks promotion.
+   Preview and `workers.dev` routes must return 404 for JWKS/PRM.
 3. Export only the public keys from the Worker JWK Set and inject that complete
    JSON document into datashop as `DATASHOP_OAUTH_WORKER_JWKS_JSON`. Datashop
    does not fetch a Worker `jwks_uri`; private fields remain only in the

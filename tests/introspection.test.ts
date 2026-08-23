@@ -97,13 +97,18 @@ describe("opaque access-token introspection", () => {
     expect(inactive).toHaveBeenCalledTimes(2);
 
     const failed = vi.fn(async () => {
-      throw new AuthorizationServerRequestError("network", "unavailable");
+      throw new AuthorizationServerRequestError("network", "unavailable", {
+        networkErrorName: "TypeError",
+        networkCauseCode: "ECONNRESET",
+      });
     });
     const failedVerifier = verifier(failed);
     await expect(failedVerifier.verifyAccessToken(OAUTH_ACCESS_TOKEN)).rejects.toMatchObject({
       code: "authorization_server_unavailable",
       upstreamKind: "network",
       upstreamStatus: undefined,
+      upstreamErrorName: "TypeError",
+      upstreamCauseCode: "ECONNRESET",
     });
     await expect(failedVerifier.verifyAccessToken(OAUTH_ACCESS_TOKEN)).rejects.toMatchObject({
       code: "authorization_server_unavailable",
@@ -117,6 +122,15 @@ describe("opaque access-token introspection", () => {
       code: "authorization_server_unavailable",
       upstreamKind: "http",
       upstreamStatus: 401,
+    });
+
+    const redirected = vi.fn(async () => {
+      throw new AuthorizationServerRequestError("redirect", "redirected", { status: 307 });
+    });
+    await expect(verifier(redirected).verifyAccessToken(OAUTH_ACCESS_TOKEN)).rejects.toMatchObject({
+      code: "authorization_server_unavailable",
+      upstreamKind: "redirect",
+      upstreamStatus: 307,
     });
   });
 

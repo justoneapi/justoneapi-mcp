@@ -25,18 +25,24 @@ export class OAuthInfrastructureError extends Error {
   readonly code: "authorization_server_unavailable" | "authorization_server_contract_error";
   readonly upstreamKind?: AuthorizationServerRequestError["kind"];
   readonly upstreamStatus?: number;
+  readonly upstreamErrorName?: AuthorizationServerRequestError["networkErrorName"];
+  readonly upstreamCauseCode?: AuthorizationServerRequestError["networkCauseCode"];
 
   constructor(
     code: OAuthInfrastructureError["code"],
     options: {
       upstreamKind?: AuthorizationServerRequestError["kind"];
       upstreamStatus?: number;
+      upstreamErrorName?: AuthorizationServerRequestError["networkErrorName"];
+      upstreamCauseCode?: AuthorizationServerRequestError["networkCauseCode"];
     } = {}
   ) {
     super(code);
     this.code = code;
     this.upstreamKind = options.upstreamKind;
     this.upstreamStatus = options.upstreamStatus;
+    this.upstreamErrorName = options.upstreamErrorName;
+    this.upstreamCauseCode = options.upstreamCauseCode;
   }
 }
 
@@ -87,6 +93,8 @@ export class IntrospectionTokenVerifier implements OAuthTokenVerifier {
         throw new OAuthInfrastructureError("authorization_server_unavailable", {
           upstreamKind: error.kind,
           upstreamStatus: error.status,
+          upstreamErrorName: error.networkErrorName,
+          upstreamCauseCode: error.networkCauseCode,
         });
       }
       throw error;

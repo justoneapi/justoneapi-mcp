@@ -84,6 +84,8 @@ describe("Worker OAuth HTTP boundary", () => {
   ] as const)(
     "serves the v2 remote tool list in canonical %s mode through the %s stateless lane",
     async (mode, protocolVersion) => {
+      const upstreamFetch = vi.fn();
+      vi.stubGlobal("fetch", upstreamFetch);
       const headers = new Headers({
         accept: "application/json, text/event-stream",
         authorization: `Bearer ${"A".repeat(16)}`,
@@ -126,6 +128,7 @@ describe("Worker OAuth HTTP boundary", () => {
         expect(body).not.toContain("securitySchemes");
         expect(body).not.toContain("oauth2");
       }
+      expect(upstreamFetch).not.toHaveBeenCalled();
     }
   );
 
@@ -227,6 +230,118 @@ describe("Worker OAuth HTTP boundary", () => {
     expect(serializedLog).not.toContain(assertion);
     expect(serializedLog).not.toContain(upstreamDetail);
     expect(serializedLog).not.toContain(privateJwks);
+  });
+
+  it("logs a redirect status without following or exposing the redirect target", async () => {
+    const redirectLocation = "https://attacker.invalid/sensitive-redirect";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const asFetch = vi.fn(
+      async () => new Response(null, { status: 307, headers: { location: redirectLocation } })
+    );
+    vi.stubGlobal("fetch", asFetch);
+
+    const response = await fetchWorker(
+      new Request("https://mcp.justoneapi.com/mcp", {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${OAUTH_ACCESS_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(asFetch).toHaveBeenCalledOnce();
+    expect(asFetch.mock.calls[0][1]?.redirect).toBe("manual");
+    const form = new URLSearchParams(String(asFetch.mock.calls[0][1]?.body));
+    const assertion = form.get("client_assertion");
+    if (!assertion) throw new Error("client assertion was not sent");
+    const serializedLog = errorLog.mock.calls.flat().join("\n");
+    expect(serializedLog).toContain('"upstream_kind":"redirect"');
+    expect(serializedLog).toContain('"upstream_status":307');
+    expect(serializedLog).not.toContain(redirectLocation);
+    expect(serializedLog).not.toContain(OAUTH_ACCESS_TOKEN);
+    expect(serializedLog).not.toContain(assertion);
+  });
+
+  it("logs only allowlisted network error types and cause codes", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const networkMessage = "sensitive network failure";
+    const causeDetail = "sensitive cause detail";
+    const asFetch = vi.fn(async () => {
+      throw new TypeError(networkMessage, {
+        cause: { code: "ECONNRESET", detail: causeDetail },
+      });
+    });
+    vi.stubGlobal("fetch", asFetch);
+
+    const response = await fetchWorker(
+      new Request("https://mcp.justoneapi.com/mcp", {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${OAUTH_ACCESS_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(asFetch).toHaveBeenCalledOnce();
+    const form = new URLSearchParams(String(asFetch.mock.calls[0][1]?.body));
+    const assertion = form.get("client_assertion");
+    if (!assertion) throw new Error("client assertion was not sent");
+    const serializedLog = errorLog.mock.calls.flat().join("\n");
+    expect(serializedLog).toContain('"upstream_kind":"network"');
+    expect(serializedLog).toContain('"upstream_error_name":"TypeError"');
+    expect(serializedLog).toContain('"upstream_cause_code":"ECONNRESET"');
+    expect(serializedLog).not.toContain(networkMessage);
+    expect(serializedLog).not.toContain(causeDetail);
+    expect(serializedLog).not.toContain(OAUTH_ACCESS_TOKEN);
+    expect(serializedLog).not.toContain(assertion);
+  });
+
+  it("drops unknown network diagnostics from structured logs", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const unknownName = "SensitiveCustomError";
+    const unknownCode = "SECRET_INTERNAL_CODE";
+    const networkMessage = "sensitive unknown network failure";
+    const asFetch = vi.fn(async () => {
+      const error = new Error(networkMessage, { cause: { code: unknownCode } });
+      error.name = unknownName;
+      throw error;
+    });
+    vi.stubGlobal("fetch", asFetch);
+
+    const response = await fetchWorker(
+      new Request("https://mcp.justoneapi.com/mcp", {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${OAUTH_ACCESS_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(asFetch).toHaveBeenCalledOnce();
+    const form = new URLSearchParams(String(asFetch.mock.calls[0][1]?.body));
+    const assertion = form.get("client_assertion");
+    if (!assertion) throw new Error("client assertion was not sent");
+    const serializedLog = errorLog.mock.calls.flat().join("\n");
+    expect(serializedLog).toContain('"upstream_kind":"network"');
+    expect(serializedLog).not.toContain("upstream_error_name");
+    expect(serializedLog).not.toContain("upstream_cause_code");
+    expect(serializedLog).not.toContain(unknownName);
+    expect(serializedLog).not.toContain(unknownCode);
+    expect(serializedLog).not.toContain(networkMessage);
+    expect(serializedLog).not.toContain(OAUTH_ACCESS_TOKEN);
+    expect(serializedLog).not.toContain(assertion);
   });
 
   it("never advertises or accepts OAuth on workers.dev preview routes", async () => {

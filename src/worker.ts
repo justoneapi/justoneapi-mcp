@@ -221,6 +221,8 @@ async function mcpResponse(
         category: error.code,
         ...(error.upstreamKind ? { upstream_kind: error.upstreamKind } : {}),
         ...(error.upstreamStatus !== undefined ? { upstream_status: error.upstreamStatus } : {}),
+        ...(error.upstreamErrorName ? { upstream_error_name: error.upstreamErrorName } : {}),
+        ...(error.upstreamCauseCode ? { upstream_cause_code: error.upstreamCauseCode } : {}),
       });
       return serviceUnavailableResponse();
     }

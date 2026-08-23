@@ -5,20 +5,46 @@ import { importActiveSigningKey, type ParsedPrivateJwkSet } from "./jwks.js";
 const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 const MAX_AUTHORIZATION_SERVER_RESPONSE_BYTES = 64 * 1024;
 
+const SAFE_NETWORK_ERROR_NAMES = ["Error", "NetworkError", "TypeError"] as const;
+const SAFE_NETWORK_CAUSE_CODES = [
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "ETIMEDOUT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+] as const;
+
+type SafeNetworkErrorName = (typeof SAFE_NETWORK_ERROR_NAMES)[number];
+type SafeNetworkCauseCode = (typeof SAFE_NETWORK_CAUSE_CODES)[number];
+
 export class AuthorizationServerRequestError extends Error {
-  readonly kind: "network" | "timeout" | "http" | "invalid_response";
+  readonly kind: "network" | "timeout" | "redirect" | "http" | "invalid_response";
   readonly status?: number;
   readonly oauthError?: string;
+  readonly networkErrorName?: SafeNetworkErrorName;
+  readonly networkCauseCode?: SafeNetworkCauseCode;
 
   constructor(
     kind: AuthorizationServerRequestError["kind"],
     message: string,
-    options: { status?: number; oauthError?: string } = {}
+    options: {
+      status?: number;
+      oauthError?: string;
+      networkErrorName?: SafeNetworkErrorName;
+      networkCauseCode?: SafeNetworkCauseCode;
+    } = {}
   ) {
     super(message);
     this.kind = kind;
     this.status = options.status;
     this.oauthError = options.oauthError;
+    this.networkErrorName = options.networkErrorName;
+    this.networkCauseCode = options.networkCauseCode;
   }
 }
 
@@ -41,7 +67,7 @@ export class AuthorizationServerClient {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.authorizationServerTimeoutMs);
-    let response: Response;
+    let response: Response | undefined;
     try {
       response = await fetch(endpoint, {
         method: "POST",
@@ -50,27 +76,42 @@ export class AuthorizationServerClient {
           "content-type": "application/x-www-form-urlencoded",
         },
         body: form,
-        redirect: "error",
+        redirect: "manual",
         signal: controller.signal,
       });
+
+      if (response.status >= 300 && response.status < 400) {
+        throw new AuthorizationServerRequestError(
+          "redirect",
+          "Authorization Server redirected request",
+          { status: response.status }
+        );
+      }
+
+      const payload = await readJsonObject(response);
+      if (!response.ok) {
+        throw new AuthorizationServerRequestError("http", "Authorization Server rejected request", {
+          status: response.status,
+          oauthError: typeof payload.error === "string" ? payload.error : undefined,
+        });
+      }
+      return payload;
     } catch (error) {
-      const timeout = error instanceof Error && error.name === "AbortError";
+      if (error instanceof AuthorizationServerRequestError) throw error;
+      const timeout =
+        controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
+      const diagnostics = timeout ? {} : safeNetworkDiagnostics(error);
       throw new AuthorizationServerRequestError(
         timeout ? "timeout" : "network",
-        timeout ? "Authorization Server request timed out" : "Authorization Server request failed"
+        timeout ? "Authorization Server request timed out" : "Authorization Server request failed",
+        {
+          ...(response ? { status: response.status } : {}),
+          ...diagnostics,
+        }
       );
     } finally {
       clearTimeout(timer);
     }
-
-    const payload = await readJsonObject(response);
-    if (!response.ok) {
-      throw new AuthorizationServerRequestError("http", "Authorization Server rejected request", {
-        status: response.status,
-        oauthError: typeof payload.error === "string" ? payload.error : undefined,
-      });
-    }
-    return payload;
   }
 
   private async createClientAssertion(audience: string): Promise<string> {
@@ -88,6 +129,33 @@ export class AuthorizationServerClient {
       .setJti(crypto.randomUUID())
       .sign(key);
   }
+}
+
+function safeNetworkDiagnostics(error: unknown): {
+  networkErrorName?: SafeNetworkErrorName;
+  networkCauseCode?: SafeNetworkCauseCode;
+} {
+  if (!(error instanceof Error)) return {};
+  const networkErrorName = isSafeValue(error.name, SAFE_NETWORK_ERROR_NAMES)
+    ? error.name
+    : undefined;
+  const cause = error.cause;
+  const causeCode =
+    typeof cause === "object" && cause !== null && "code" in cause
+      ? (cause as { code?: unknown }).code
+      : undefined;
+  const networkCauseCode = isSafeValue(causeCode, SAFE_NETWORK_CAUSE_CODES) ? causeCode : undefined;
+  return {
+    ...(networkErrorName ? { networkErrorName } : {}),
+    ...(networkCauseCode ? { networkCauseCode } : {}),
+  };
+}
+
+function isSafeValue<const T extends readonly string[]>(
+  value: unknown,
+  allowlist: T
+): value is T[number] {
+  return typeof value === "string" && (allowlist as readonly string[]).includes(value);
 }
 
 async function readJsonObject(response: Response): Promise<Record<string, unknown>> {

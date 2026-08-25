@@ -29,9 +29,28 @@ JustOneAPI Token 调用接口。
 https://mcp.justoneapi.com/mcp
 ```
 
-客户端会自动发现受保护资源信息，跳转到 `auth.justoneapi.com`，并申请当前工具所需的权限。
+客户端会自动发现受保护资源信息，跳转到 `auth.justoneapi.com`，并申请授权页展示的 MCP 权限。
 不需要把 JustOneAPI API Token 粘贴进客户端。凡是实现标准 MCP OAuth 发现流程的客户端都可以
 使用，具体入口名称可能因客户端而异。
+
+#### 各客户端接入方式
+
+- **ChatGPT：**新增自定义 MCP 工具或插件连接，填写上面的生产地址。ChatGPT 会自动发现
+  OAuth，并打开 JustOneAPI 授权确认页。
+- **Codex CLI / IDE / 桌面端：**执行
+  `codex mcp add justoneapi --url https://mcp.justoneapi.com/mcp`。如果新增时没有自动打开授权页，
+  再执行 `codex mcp login justoneapi`。Codex 会优先自动使用 CIMD，不满足条件时回退到 DCR。
+- **Claude.ai / Claude Desktop 远程连接器：**进入 **Customize → Connectors → Add custom
+  connector**，填写生产地址并连接 JustOneAPI 账号。这两个 Hosted 客户端共用远程连接器。
+  Team 和 Enterprise 方案由 Owner 或 Admin 添加连接器，成员再连接自己的账号。
+- **Claude Code：**执行
+  `claude mcp add --transport http justoneapi https://mcp.justoneapi.com/mcp`。然后启动 Claude
+  Code，执行 `/mcp`，选择 `justoneapi` 并按提示完成 OAuth。浏览器授权后会通过随机 localhost
+  端口回到 Claude Code。
+
+授权页会展示申请的 scope。账户 Owner 可以选择已有 API Token 或创建专用 Token；Token
+Member 只能使用分配给自己的固定 Token。后续断开应用只会撤销该 OAuth 连接，不会停用或
+删除所绑定的 API Token。
 
 ### 使用现有 API Token 的远程 HTTP
 

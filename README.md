@@ -34,10 +34,36 @@ https://mcp.justoneapi.com/mcp
 ```
 
 The client discovers the protected-resource metadata, redirects you to
-`auth.justoneapi.com`, and asks for the scopes required by the tools you use.
+`auth.justoneapi.com`, and asks for the MCP scopes shown on the consent page.
 No JustOneAPI API Token needs to be pasted into the client. This works with any
 MCP client that implements the standard OAuth discovery flow; UI wording varies
 by client.
+
+#### Client setup
+
+- **ChatGPT:** add a custom MCP tool or plugin connection and use the production
+  URL above. ChatGPT discovers OAuth automatically and opens the JustOneAPI
+  consent page.
+- **Codex CLI / IDE / desktop:** run
+  `codex mcp add justoneapi --url https://mcp.justoneapi.com/mcp`. If the
+  authorization page does not open during setup, run `codex mcp login justoneapi`.
+  Codex automatically chooses CIMD when available and otherwise falls back to
+  DCR.
+- **Claude.ai / Claude Desktop remote connector:** open **Customize →
+  Connectors → Add custom connector**, enter the production URL, then connect
+  your JustOneAPI account. These hosted surfaces use the same remote connector.
+  On Team and Enterprise plans, an Owner or Admin adds the connector and members
+  then connect their accounts.
+- **Claude Code:** run
+  `claude mcp add --transport http justoneapi https://mcp.justoneapi.com/mcp`.
+  Then start Claude Code, run `/mcp`, select `justoneapi`, and follow the OAuth
+  prompt. The browser returns to Claude Code through a random localhost callback
+  port.
+
+The authorization page shows the requested scopes. An account owner selects an
+existing API Token or creates a dedicated one; a Token Member can only use the
+Token assigned to that member. Disconnecting the app later revokes only its
+OAuth connection; it does not disable or delete the linked API Token.
 
 ### Remote HTTP with an existing API Token
 

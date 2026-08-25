@@ -1,6 +1,10 @@
 # Dependencies
 node_modules/
 
+# Non-authoritative package-manager artifacts (npm/package-lock is canonical)
+pnpm-lock.yaml
+pnpm-workspace.yaml
+
 # Build output
 dist/
 .wrangler/

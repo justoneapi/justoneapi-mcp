@@ -56,9 +56,9 @@ by client.
   then connect their accounts.
 - **Claude Code:** run
   `claude mcp add --transport http justoneapi https://mcp.justoneapi.com/mcp`.
-  Then start Claude Code, run `/mcp`, select `justoneapi`, and follow the OAuth
-  prompt. The browser returns to Claude Code through a random localhost callback
-  port.
+  Then run `claude mcp login justoneapi`, or start Claude Code and use `/mcp`,
+  to complete OAuth. The browser returns to Claude Code through a random
+  localhost callback port.
 
 The authorization page shows the requested scopes. An account owner selects an
 existing API Token or creates a dedicated one; a Token Member can only use the

@@ -45,8 +45,8 @@ https://mcp.justoneapi.com/mcp
   Team 和 Enterprise 方案由 Owner 或 Admin 添加连接器，成员再连接自己的账号。
 - **Claude Code：**执行
   `claude mcp add --transport http justoneapi https://mcp.justoneapi.com/mcp`。然后启动 Claude
-  Code，执行 `/mcp`，选择 `justoneapi` 并按提示完成 OAuth。浏览器授权后会通过随机 localhost
-  端口回到 Claude Code。
+  Code 前直接执行 `claude mcp login justoneapi`，或者进入 Claude Code 后使用 `/mcp` 完成
+  OAuth。浏览器授权后会通过随机 localhost 端口回到 Claude Code。
 
 授权页会展示申请的 scope。账户 Owner 可以选择已有 API Token 或创建专用 Token；Token
 Member 只能使用分配给自己的固定 Token。后续断开应用只会撤销该 OAuth 连接，不会停用或

@@ -2,51 +2,62 @@
 
 简体中文 | [English](README.md)
 
-在 Codex、Claude Desktop、Cursor 等 MCP 客户端中使用 JustOneAPI。
+在 ChatGPT、Codex、Cursor、Hermes Agent 等 MCP 客户端中使用 JustOneAPI。
 
-JustOneAPI MCP 可以帮助你的 AI 助手查找合适的 JustOneAPI 接口、查看接口需要的参数，并使用你的
-JustOneAPI Token 调用接口。
+JustOneAPI MCP 可以帮助你的 AI 助手查找合适的 JustOneAPI 接口、查看接口需要的参数，并在完成
+JustOneAPI 授权后调用接口。
 
 ## 支持的客户端
 
-只要你的 AI 客户端支持 MCP，就可以使用 JustOneAPI MCP。常见客户端包括：
+JustOneAPI MCP 支持远程 Streamable HTTP 和本地 stdio。当前已验证及兼容方式包括：
 
-- Codex
-- Claude Desktop
-- Cursor
-- 其他支持 MCP 的 AI 助手
+- ChatGPT Web Developer mode 自定义 MCP 连接：OAuth，已验证。
+- Codex CLI 和 Codex IDE 扩展：OAuth，已验证。
+- Cursor、Hermes Agent 及其他支持自定义请求头的客户端：现有 API Token 兼容方式。
+- Claude.ai、Claude Desktop 和 Claude Code：OAuth 仍在兼容性测试中；Claude Code 可继续使用
+  现有 API Token 请求头。
 
-支持 MCP OAuth 自动发现的客户端，只需要填写远程地址，再在浏览器中完成授权即可。暂不支持
-这套授权流程的客户端，仍可继续使用原有 API Token 请求头或本地 stdio。
+支持兼容 OAuth 注册流程的客户端，只需要填写远程地址，再在浏览器中完成授权。能否直接连接还
+取决于客户端支持的注册方式及账号或工作区策略。暂不支持 OAuth 的客户端仍可继续使用原有 API
+Token 请求头或本地 stdio。
 
 ## 快速接入
 
 ### 使用 OAuth 的远程 HTTP
 
-生产服务开启 OAuth 后，把下面的地址添加为自定义 MCP 连接器：
+生产服务已开启 OAuth，直接把下面的地址添加为 MCP 连接即可：
 
 ```text
 https://mcp.justoneapi.com/mcp
 ```
 
-客户端会自动发现受保护资源信息，跳转到 `auth.justoneapi.com`，并申请授权页展示的 MCP 权限。
-不需要把 JustOneAPI API Token 粘贴进客户端。凡是实现标准 MCP OAuth 发现流程的客户端都可以
-使用，具体入口名称可能因客户端而异。
+兼容的客户端会发现受保护资源信息，跳转到 `auth.justoneapi.com`，并申请授权页展示的 MCP
+权限。不需要把 JustOneAPI API Token 粘贴进客户端。具体入口、OAuth 注册方式和账号限制因
+客户端而异，下面只列出已经验证的 OAuth 路径。
 
 #### 各客户端接入方式
 
-- **ChatGPT：**新增自定义 MCP 工具或插件连接，填写上面的生产地址。ChatGPT 会自动发现
-  OAuth，并打开 JustOneAPI 授权确认页。
-- **Codex CLI / IDE / 桌面端：**执行
-  `codex mcp add justoneapi --url https://mcp.justoneapi.com/mcp`。如果新增时没有自动打开授权页，
-  再执行 `codex mcp login justoneapi`。Codex 会优先自动使用 CIMD，不满足条件时回退到 DCR。
-- **Claude.ai / Claude Desktop 远程连接器：**进入 **Customize → Connectors → Add custom
-  connector**，填写生产地址并连接 JustOneAPI 账号。这两个 Hosted 客户端共用远程连接器。
-  Team 和 Enterprise 方案由 Owner 或 Admin 添加连接器，成员再连接自己的账号。
-- **Claude Code：**执行
-  `claude mcp add --transport http justoneapi https://mcp.justoneapi.com/mcp`。然后启动 Claude
-  Code 前直接执行 `claude mcp login justoneapi`，或者进入 Claude Code 后使用 `/mcp` 完成
-  OAuth。浏览器授权后会通过随机 localhost 端口回到 Claude Code。
+- **ChatGPT Web：**打开 `Settings → Security and login` 并启用 `Developer mode`，进入
+  `Plugins` 页面后点击 `+`，填写名称、说明和上面的 `/mcp` 地址，Authentication 选择 OAuth。
+  创建连接后，由 ChatGPT 自动发现认证信息，并在连接流程或首次调用需要授权的工具时进入授权
+  流程。Developer mode 是否可见可能取决于 ChatGPT 账号和工作区策略。
+- **Codex CLI / IDE 扩展：**执行下面的命令。当前推荐显式使用已经验证的 DCR 注册路径：
+
+```bash
+codex mcp add justoneapi \
+  --url https://mcp.justoneapi.com/mcp
+
+codex mcp login justoneapi \
+  --oauth-client-registration dcr
+```
+
+ChatGPT 桌面端、Codex CLI 和 Codex IDE 扩展会读取同一台 Codex 主机上的 MCP 配置。ChatGPT
+和 Codex 的当前入口可查看 [OpenAI MCP 官方文档](https://developers.openai.com/codex/mcp/)及
+[ChatGPT 连接测试说明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。
+
+Claude.ai、Claude Desktop 和 Claude Code 的 OAuth 接入仍在兼容性测试中，暂不列为正式支持的
+OAuth 连接方式。Claude Code 可以通过 `--header "Authorization: Bearer your_token"` 使用现有
+API Token；不要把下面的通用 JSON 直接当作 Claude Code 配置。
 
 授权页会展示申请的 scope。账户 Owner 可以选择已有 API Token 或创建专用 Token；Token
 Member 只能使用分配给自己的固定 Token。后续断开应用只会撤销该 OAuth 连接，不会停用或
@@ -74,14 +85,15 @@ Catalog 构建和动态发布使用内置的公开安全校验，不需要运维
 
 ### 本地 stdio
 
-也可以使用 `npx` 在本地运行 MCP 服务。2.0 版本要求 Node.js 20 或更高版本。
+截至 2026-08-25，npm 的 `latest` 仍是旧版 `1.0.1`，不是仓库中的 2.0 实现。如果必须在本地
+使用 stdio，请固定版本，避免把旧 CLI 当作与线上 v2 服务完全相同的实现：
 
 ```json
 {
   "mcpServers": {
     "justoneapi": {
       "command": "npx",
-      "args": ["-y", "justoneapi-mcp"],
+      "args": ["-y", "justoneapi-mcp@1.0.1"],
       "env": {
         "JUSTONEAPI_TOKEN": "your_token"
       }
@@ -90,15 +102,14 @@ Catalog 构建和动态发布使用内置的公开安全校验，不需要运维
 }
 ```
 
-仍在使用 Node.js 18 的用户，需要暂时固定使用旧版 `justoneapi-mcp@1.0.1`，升级 Node.js 后再
-使用 2.0。OAuth 只用于远程 Worker；stdio 仍从本地读取 `JUSTONEAPI_TOKEN`。
-
-发布后的 CLI 支持 Node.js 20、22、24；Wrangler 的 Worker 构建与类型生成命令要求 Node.js
-22 或更高版本。
+旧版 `1.0.1` 支持 Node.js 18 或更高版本，其工具结构不等同于线上 v2。OAuth 只用于远程
+Worker；stdio 仍从本地读取 `JUSTONEAPI_TOKEN`。2.0 发布到 npm 后，再按实际 dist-tag 更新
+这里的版本说明。
 
 ## 认证与权限范围
 
-使用你的 JustOneAPI Token：
+OAuth 用户在授权页选择要绑定的 API Token，不需要把 Token 粘贴进客户端。现有 API Token 远程
+兼容方式使用：
 
 ```text
 Authorization: Bearer your_token
@@ -110,7 +121,7 @@ Authorization: Bearer your_token
 JUSTONEAPI_TOKEN=your_token
 ```
 
-推荐使用 `Bearer your_token` 格式。
+本地 stdio 使用上面的环境变量；不要把真实 Token 提交到仓库。
 
 OAuth 按最小权限拆为三个 scope：
 
@@ -127,7 +138,8 @@ Token 不会写入后端 URL 或表单；委托 Token 只通过 Authorization Be
 
 ## 运维发布方式
 
-OAuth 是独立新增并由开关控制的能力：
+生产环境当前使用 `dual` 模式。OAuth 是独立新增并由开关控制的能力，这些开关继续作为发布和
+回滚边界：
 
 - `JUSTONEAPI_OAUTH_MODE=off`：远程服务保持原有模式，并隐藏 OAuth 发现信息。
 - `JUSTONEAPI_OAUTH_MODE=dual`：只在准确的 `https://mcp.justoneapi.com` origin 上同时接受原有
